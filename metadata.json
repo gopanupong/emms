@@ -1,0 +1,5 @@
+{
+  "name": "Equipment Maintenance Management System (EMMS)",
+  "description": "ระบบติดตามการแจ้งซ่อมอุปกรณ์ชำรุด พร้อมระบบ AI ช่วยดึงข้อมูลอัตโนมัติและเชื่อมต่อ Google Sheets/Drive",
+  "requestFramePermissions": []
+}
