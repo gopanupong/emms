@@ -45,52 +45,64 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
     const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
 
     let fileUrl = "";
+    let uploadError = "";
+
     if (file) {
-      const substation = (data.substation || "Unknown").replace(/'/g, "\\'");
-      let folderId = "";
-      
-      const folderSearch = await drive.files.list({
-        q: `name = '${substation}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
-        fields: "files(id)",
-      });
-
-      if (folderSearch.data.files && folderSearch.data.files.length > 0) {
-        folderId = folderSearch.data.files[0].id!;
-      } else {
-        const folderMetadata = {
-          name: data.substation || "Unknown",
-          mimeType: "application/vnd.google-apps.folder",
-          parents: [rootFolderId!],
-        };
-        const newFolder = await drive.files.create({
-          requestBody: folderMetadata,
-          fields: "id",
+      try {
+        // 1. Find or create substation folder
+        const substation = (data.substation || "Unknown").replace(/'/g, "\\'");
+        let folderId = "";
+        
+        const folderSearch = await drive.files.list({
+          q: `name = '${substation}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
+          fields: "files(id)",
         });
-        folderId = newFolder.data.id!;
+
+        if (folderSearch.data.files && folderSearch.data.files.length > 0) {
+          folderId = folderSearch.data.files[0].id!;
+        } else {
+          const folderMetadata = {
+            name: data.substation || "Unknown",
+            mimeType: "application/vnd.google-apps.folder",
+            parents: [rootFolderId!],
+          };
+          const newFolder = await drive.files.create({
+            requestBody: folderMetadata,
+            fields: "id",
+          });
+          folderId = newFolder.data.id!;
+        }
+
+        // 2. Upload file to folder
+        const fileName = data.docNumber 
+          ? `${data.docNumber}_${file.originalname}`
+          : file.originalname;
+
+        const fileMetadata = {
+          name: fileName,
+          parents: [folderId],
+        };
+        const media = {
+          mimeType: file.mimetype,
+          body: fs.createReadStream(file.path),
+        };
+        const uploadedFile = await drive.files.create({
+          requestBody: fileMetadata,
+          media: media,
+          fields: "id, webViewLink",
+        });
+        fileUrl = uploadedFile.data.webViewLink!;
+      } catch (err: any) {
+        console.error("Drive upload failed:", err);
+        uploadError = ` (ไฟล์อัปโหลดไม่สำเร็จ: ${err.message})`;
+      } finally {
+        if (file && fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
       }
-
-      const fileName = data.docNumber 
-        ? `${data.docNumber}_${file.originalname}`
-        : file.originalname;
-
-      const fileMetadata = {
-        name: fileName,
-        parents: [folderId],
-      };
-      const media = {
-        mimeType: file.mimetype,
-        body: fs.createReadStream(file.path),
-      };
-      const uploadedFile = await drive.files.create({
-        requestBody: fileMetadata,
-        media: media,
-        fields: "id, webViewLink",
-      });
-      fileUrl = uploadedFile.data.webViewLink!;
-      
-      fs.unlinkSync(file.path);
     }
 
+    // 3. Append to Google Sheet (Always try to save text data)
     const values = [[
       new Date().toLocaleString('th-TH'),
       data.substation,
@@ -100,7 +112,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       data.responsible,
       data.status,
       data.signedDate,
-      fileUrl
+      fileUrl || "ไม่มีไฟล์ (Quota Error)"
     ]];
 
     await sheets.spreadsheets.values.append({
@@ -110,7 +122,11 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       requestBody: { values },
     });
 
-    res.json({ success: true });
+    if (uploadError) {
+      res.json({ success: true, warning: `บันทึกข้อมูลลงตารางแล้ว แต่${uploadError}` });
+    } else {
+      res.json({ success: true });
+    }
   } catch (error: any) {
     console.error("Error saving repair data", error);
     res.status(500).json({ error: error.message });

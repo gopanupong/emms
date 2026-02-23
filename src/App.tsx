@@ -71,10 +71,18 @@ export default function App() {
   };
 
   const extractData = async (file: File) => {
+    const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      console.error('Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in environment variables.');
+      setMessage({ type: 'error', text: 'ไม่พบ API Key (VITE_GEMINI_API_KEY) กรุณาตรวจสอบการตั้งค่าใน Vercel' });
+      return;
+    }
+
     setIsExtracting(true);
     setMessage(null);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       
       // Convert file to base64
       const reader = new FileReader();
@@ -161,14 +169,18 @@ export default function App() {
       });
       const result = await res.json();
       if (result.success) {
-        setMessage({ type: 'success', text: 'บันทึกข้อมูลเรียบร้อยแล้ว' });
-        // Reset form after delay
-        setTimeout(() => {
-          setRepairData(INITIAL_DATA);
-          setSelectedFile(null);
-          setPreviewUrl(null);
-          setMessage(null);
-        }, 3000);
+        if (result.warning) {
+          setMessage({ type: 'error', text: result.warning });
+        } else {
+          setMessage({ type: 'success', text: 'บันทึกข้อมูลเรียบร้อยแล้ว' });
+          // Reset form after delay only on full success
+          setTimeout(() => {
+            setRepairData(INITIAL_DATA);
+            setSelectedFile(null);
+            setPreviewUrl(null);
+            setMessage(null);
+          }, 3000);
+        }
       } else {
         throw new Error(result.error || 'Failed to save');
       }
