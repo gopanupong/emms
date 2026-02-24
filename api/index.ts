@@ -25,31 +25,42 @@ app.use(
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = `${process.env.APP_URL}/auth/callback`;
 
-const oauth2Client = new google.auth.OAuth2(
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  REDIRECT_URI
-);
+const getOAuth2Client = (req?: express.Request) => {
+  const appUrl = process.env.APP_URL;
+  if (!appUrl) {
+    console.error("APP_URL environment variable is missing!");
+  }
+  const redirectUri = `${appUrl}/auth/callback`;
+  console.log("OAuth Redirect URI:", redirectUri);
+  return new google.auth.OAuth2(
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    redirectUri
+  );
+};
 
 // Auth Routes
 app.get("/api/auth/url", (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
+  const client = getOAuth2Client(req);
+  const url = client.generateAuthUrl({
     access_type: "offline",
     scope: [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/drive.file",
     ],
     prompt: "consent",
+    // Explicitly pass redirect_uri if needed, though constructor should handle it
+    redirect_uri: `${process.env.APP_URL}/auth/callback`
   });
   res.json({ url });
 });
 
 app.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
+  const client = getOAuth2Client(req);
   try {
-    const { tokens } = await oauth2Client.getToken(code as string);
+    const { tokens } = await client.getToken(code as string);
     (req as any).session.tokens = tokens;
     
     res.send(`
@@ -89,7 +100,7 @@ const upload = multer({ dest: os.tmpdir() });
 async function getAuthenticatedClient(req: express.Request) {
   const tokens = (req as any).session.tokens;
   if (!tokens) throw new Error("Not authenticated");
-  const client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, REDIRECT_URI);
+  const client = getOAuth2Client(req);
   client.setCredentials(tokens);
   return client;
 }
