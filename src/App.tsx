@@ -46,6 +46,7 @@ const INITIAL_DATA: RepairData = {
 // --- Components ---
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [repairData, setRepairData] = useState<RepairData>(INITIAL_DATA);
@@ -53,6 +54,46 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    checkAuthStatus();
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
+        setIsAuthenticated(true);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  const checkAuthStatus = async () => {
+    try {
+      const res = await fetch('/api/auth/status');
+      const data = await res.json();
+      setIsAuthenticated(data.isAuthenticated);
+    } catch (error) {
+      console.error('Failed to check auth status', error);
+      setIsAuthenticated(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    try {
+      const res = await fetch('/api/auth/url');
+      const { url } = await res.json();
+      window.open(url, 'google_auth', 'width=600,height=700');
+    } catch (error) {
+      console.error('Failed to get auth URL', error);
+    }
+  };
+
+  const handleLogout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    setIsAuthenticated(false);
+    setRepairData(INITIAL_DATA);
+    setSelectedFile(null);
+    setPreviewUrl(null);
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,7 +112,7 @@ export default function App() {
   };
 
   const extractData = async (file: File) => {
-    const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     
     if (!apiKey) {
       console.error('Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in environment variables.');
@@ -192,10 +233,39 @@ export default function App() {
     }
   };
 
-  if (false) {
+  if (isAuthenticated === null) {
     return (
-      <div className="min-h-screen bg-stone-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-stone-400" />
+      <div className="min-h-screen bg-purple-50/50 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-purple-50/50 flex flex-col items-center justify-center p-6 text-center">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="bg-white p-12 rounded-[40px] shadow-xl border border-purple-100 max-w-md w-full space-y-8"
+        >
+          <div className="w-20 h-20 bg-purple-900 rounded-3xl flex items-center justify-center mx-auto shadow-lg">
+            <Settings className="w-10 h-10 text-white" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold tracking-tight">ยินดีต้อนรับสู่ EMMS</h2>
+            <p className="text-stone-500 text-sm">กรุณาเข้าสู่ระบบด้วย Google เพื่อเริ่มใช้งานระบบแจ้งซ่อม</p>
+          </div>
+          <button 
+            onClick={handleLogin}
+            className="w-full py-4 bg-purple-900 text-white rounded-2xl font-bold text-sm uppercase tracking-widest hover:bg-purple-800 transition-all flex items-center justify-center gap-3 shadow-lg active:scale-95"
+          >
+            <Upload className="w-5 h-5" /> เข้าสู่ระบบด้วย Google
+          </button>
+          <p className="text-[10px] text-stone-400 uppercase tracking-widest font-bold">
+            ระบบจะใช้พื้นที่จัดเก็บใน Google Drive ของคุณโดยตรง
+          </p>
+        </motion.div>
       </div>
     );
   }
@@ -211,6 +281,14 @@ export default function App() {
             </div>
             <h1 className="text-lg font-semibold tracking-tight">EMMS</h1>
           </div>
+          {isAuthenticated && (
+            <button 
+              onClick={handleLogout}
+              className="text-xs font-bold uppercase tracking-widest text-purple-400 hover:text-purple-600 flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" /> ออกจากระบบ
+            </button>
+          )}
         </div>
       </header>
 
