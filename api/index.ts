@@ -3,111 +3,36 @@ import { google } from "googleapis";
 import multer from "multer";
 import fs from "fs";
 import os from "os";
-import cookieParser from "cookie-parser";
-import session from "express-session";
 
 const app = express();
 
 app.use(express.json());
-app.use(cookieParser());
-app.use(
-  session({
-    secret: "repair-tracker-secret",
-    resave: false,
-    saveUninitialized: true,
-    cookie: {
-      secure: true,
-      sameSite: "none",
-      httpOnly: true,
-    },
-  })
-);
 
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
-const getOAuth2Client = (req?: express.Request) => {
-  const appUrl = process.env.APP_URL;
-  if (!appUrl) {
-    console.error("APP_URL environment variable is missing!");
+async function getAuthenticatedClient() {
+  if (!SERVICE_ACCOUNT_EMAIL || !SERVICE_ACCOUNT_PRIVATE_KEY) {
+    throw new Error("Google Service Account credentials not configured.");
   }
-  const redirectUri = `${appUrl}/auth/callback`;
-  console.log("OAuth Redirect URI:", redirectUri);
-  return new google.auth.OAuth2(
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    redirectUri
-  );
-};
 
-// Auth Routes
-app.get("/api/auth/url", (req, res) => {
-  const client = getOAuth2Client(req);
-  const url = client.generateAuthUrl({
-    access_type: "offline",
-    scope: [
+  const auth = new google.auth.JWT({
+    email: SERVICE_ACCOUNT_EMAIL,
+    key: SERVICE_ACCOUNT_PRIVATE_KEY,
+    scopes: [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/drive.file",
     ],
-    prompt: "consent",
-    // Explicitly pass redirect_uri if needed, though constructor should handle it
-    redirect_uri: `${process.env.APP_URL}/auth/callback`
   });
-  res.json({ url });
-});
-
-app.get("/auth/callback", async (req, res) => {
-  const { code } = req.query;
-  const client = getOAuth2Client(req);
-  try {
-    const { tokens } = await client.getToken(code as string);
-    (req as any).session.tokens = tokens;
-    
-    res.send(`
-      <html>
-        <body>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
-              window.close();
-            } else {
-              window.location.href = '/';
-            }
-          </script>
-          <p>Authentication successful. This window should close automatically.</p>
-        </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error("Error exchanging code for tokens", error);
-    res.status(500).send("Authentication failed");
-  }
-});
-
-app.get("/api/auth/status", (req, res) => {
-  res.json({ isAuthenticated: !!(req as any).session?.tokens });
-});
-
-app.post("/api/auth/logout", (req, res) => {
-  (req as any).session.destroy(() => {
-    res.json({ success: true });
-  });
-});
+  return auth;
+}
 
 // Multer setup
 const upload = multer({ dest: os.tmpdir() });
 
-async function getAuthenticatedClient(req: express.Request) {
-  const tokens = (req as any).session.tokens;
-  if (!tokens) throw new Error("Not authenticated");
-  const client = getOAuth2Client(req);
-  client.setCredentials(tokens);
-  return client;
-}
-
 app.post("/api/repair/save", upload.single("file"), async (req, res) => {
   try {
-    const auth = await getAuthenticatedClient(req);
+    const auth = await getAuthenticatedClient();
     const sheets = google.sheets({ version: "v4", auth });
     const drive = google.drive({ version: "v3", auth });
     
@@ -122,54 +47,64 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
     const sheetName = spreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
 
     let fileUrl = "";
+    let uploadError = "";
+
     if (file) {
-      // 1. Find or create substation folder
-      const substation = (data.substation || "Unknown").replace(/'/g, "\\'");
-      let folderId = "";
-      
-      const folderSearch = await drive.files.list({
-        q: `name = '${substation}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
-        fields: "files(id)",
-      });
-
-      if (folderSearch.data.files && folderSearch.data.files.length > 0) {
-        folderId = folderSearch.data.files[0].id!;
-      } else {
-        const folderMetadata = {
-          name: data.substation || "Unknown",
-          mimeType: "application/vnd.google-apps.folder",
-          parents: [rootFolderId!],
-        };
-        const newFolder = await drive.files.create({
-          requestBody: folderMetadata,
-          fields: "id",
+      try {
+        // 1. Find or create substation folder
+        const substation = (data.substation || "Unknown").replace(/'/g, "\\'");
+        let folderId = "";
+        
+        const folderSearch = await drive.files.list({
+          q: `name = '${substation}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
+          fields: "files(id)",
         });
-        folderId = newFolder.data.id!;
+
+        if (folderSearch.data.files && folderSearch.data.files.length > 0) {
+          folderId = folderSearch.data.files[0].id!;
+        } else {
+          const folderMetadata = {
+            name: data.substation || "Unknown",
+            mimeType: "application/vnd.google-apps.folder",
+            parents: [rootFolderId!],
+          };
+          const newFolder = await drive.files.create({
+            requestBody: folderMetadata,
+            fields: "id",
+          });
+          folderId = newFolder.data.id!;
+        }
+
+        // 2. Upload file to folder
+        const fileName = data.docNumber 
+          ? `${data.docNumber}_${file.originalname}`
+          : file.originalname;
+
+        const fileMetadata = {
+          name: fileName,
+          parents: [folderId],
+        };
+        const media = {
+          mimeType: file.mimetype,
+          body: fs.createReadStream(file.path),
+        };
+        const uploadedFile = await drive.files.create({
+          requestBody: fileMetadata,
+          media: media,
+          fields: "id, webViewLink",
+        });
+        fileUrl = uploadedFile.data.webViewLink!;
+      } catch (err: any) {
+        console.error("Drive upload failed:", err);
+        uploadError = ` (ไฟล์อัปโหลดไม่สำเร็จ: ${err.message})`;
+      } finally {
+        if (file && fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
       }
-
-      // 2. Upload file to folder
-      const fileName = data.docNumber 
-        ? `${data.docNumber}_${file.originalname}`
-        : file.originalname;
-
-      const fileMetadata = {
-        name: fileName,
-        parents: [folderId],
-      };
-      const media = {
-        mimeType: file.mimetype,
-        body: fs.createReadStream(file.path),
-      };
-      const uploadedFile = await drive.files.create({
-        requestBody: fileMetadata,
-        media: media,
-        fields: "id, webViewLink",
-      });
-      fileUrl = uploadedFile.data.webViewLink!;
-      
-      fs.unlinkSync(file.path);
     }
 
+    // 3. Append to Google Sheet
     const values = [[
       new Date().toLocaleString('th-TH'),
       data.substation,
@@ -179,7 +114,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       data.responsible,
       data.status,
       data.signedDate,
-      fileUrl
+      fileUrl || (uploadError ? "อัปโหลดล้มเหลว" : "")
     ]];
 
     await sheets.spreadsheets.values.append({
@@ -189,7 +124,11 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       requestBody: { values },
     });
 
-    res.json({ success: true });
+    if (uploadError) {
+      res.json({ success: true, warning: `บันทึกข้อมูลลงตารางแล้ว แต่${uploadError}` });
+    } else {
+      res.json({ success: true });
+    }
   } catch (error: any) {
     console.error("Error saving repair data", error);
     res.status(500).json({ error: error.message });
