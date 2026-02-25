@@ -8,26 +8,82 @@ const app = express();
 
 app.use(express.json());
 
+// Method 2: OAuth2 with Refresh Token (Acts as the owner of the token)
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
+const APP_URL = process.env.APP_URL;
+
+// Method 1: Service Account (Fallback or for Sheets only if needed)
 const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
 async function getAuthenticatedClient() {
-  if (!SERVICE_ACCOUNT_EMAIL || !SERVICE_ACCOUNT_PRIVATE_KEY) {
-    throw new Error("Google Service Account credentials not configured.");
+  // Priority: OAuth2 Refresh Token (Method 2)
+  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN) {
+    const oauth2Client = new google.auth.OAuth2(
+      GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET,
+      `${APP_URL}/api/auth/callback`
+    );
+    oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
+    return oauth2Client;
   }
 
-  const auth = new google.auth.JWT({
-    email: SERVICE_ACCOUNT_EMAIL,
-    key: SERVICE_ACCOUNT_PRIVATE_KEY,
-    scopes: [
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/drive.file",
-    ],
-  });
-  return auth;
+  // Fallback: Service Account (Method 1)
+  if (SERVICE_ACCOUNT_EMAIL && SERVICE_ACCOUNT_PRIVATE_KEY) {
+    return new google.auth.JWT({
+      email: SERVICE_ACCOUNT_EMAIL,
+      key: SERVICE_ACCOUNT_PRIVATE_KEY,
+      scopes: [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+      ],
+    });
+  }
+
+  throw new Error("Google credentials not configured. Please set GOOGLE_REFRESH_TOKEN or Service Account keys.");
 }
 
-// Multer setup
+// Auth Routes
+app.get(["/api/auth/init", "/auth/init"], (req, res) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
+    return res.status(400).send("Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or APP_URL in environment variables.");
+  }
+  const oauth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, `${APP_URL}/api/auth/callback`);
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive.file"],
+    prompt: "consent",
+  });
+  res.redirect(url);
+});
+
+app.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
+  const { code } = req.query;
+  try {
+    const oauth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, `${APP_URL}/api/auth/callback`);
+    const { tokens } = await oauth2Client.getToken(code as string);
+    res.send(`
+      <div style="font-family: sans-serif; padding: 40px; line-height: 1.6; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #4F46E5;">✅ คัดลอก Refresh Token ของคุณ</h2>
+        <p>นำค่าด้านล่างนี้ไปใส่ใน Vercel Environment Variables ชื่อ <b>GOOGLE_REFRESH_TOKEN</b></p>
+        <textarea style="width: 100%; height: 120px; padding: 15px; border: 2px solid #E5E7EB; border-radius: 12px; font-family: monospace; font-size: 14px; background: #F9FAFB;" readonly>${tokens.refresh_token}</textarea>
+        <div style="margin-top: 20px; padding: 15px; background: #FEF2F2; border-radius: 8px; border: 1px solid #FEE2E2;">
+          <p style="color: #EF4444; font-size: 14px; margin: 0;"><b>ขั้นตอนสุดท้าย:</b> เมื่อใส่ค่าใน Vercel แล้ว อย่าลืมกด <b>Redeploy</b> เพื่อให้ระบบเริ่มทำงานนะครับ</p>
+        </div>
+      </div>
+    `);
+  } catch (error: any) {
+    res.status(500).send("Error getting token: " + error.message);
+  }
+});
+
+app.get(["/api/auth/status", "/auth/status"], (req, res) => {
+  res.json({ isAuthenticated: !!GOOGLE_REFRESH_TOKEN });
+});
+
+// --- Main Logic ---
 const upload = multer({ dest: os.tmpdir() });
 
 app.post("/api/repair/save", upload.single("file"), async (req, res) => {
@@ -42,7 +98,6 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
 
-    // Get the spreadsheet to find the correct sheet name
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
     const sheetName = spreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
 
@@ -51,7 +106,6 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
     if (file) {
       try {
-        // 1. Find or create substation folder
         const substation = (data.substation || "Unknown").replace(/'/g, "\\'");
         let folderId = "";
         
@@ -75,7 +129,6 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
           folderId = newFolder.data.id!;
         }
 
-        // 2. Upload file to folder
         const fileName = data.docNumber 
           ? `${data.docNumber}_${file.originalname}`
           : file.originalname;
@@ -104,7 +157,6 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       }
     }
 
-    // 3. Append to Google Sheet
     const values = [[
       new Date().toLocaleString('th-TH'),
       data.substation,
