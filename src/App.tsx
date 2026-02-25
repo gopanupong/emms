@@ -109,10 +109,10 @@ export default function App() {
               {
                 text: `Extract repair information from this document in Thai. 
                 Return a JSON object with these fields:
-                - substation: ชื่อสถานีไฟฟ้า (เช่น สฟ.บางพลี)
+                - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
                 - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
-                - equipmentId: รหัสอุปกรณ์ที่ชำรุด
-                - details: รายละเอียดการชำรุด
+                - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
+                - details: รายละเอียดการชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
                 - responsible: หน่วยงานที่รับผิดชอบ
                 - signedDate: วันที่ผู้บริหารเซ็น (ระบุเป็น วว/ดด/ปปปป)
                 
@@ -126,10 +126,19 @@ export default function App() {
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              substation: { type: Type.STRING },
+              substation: { 
+                type: Type.STRING,
+                description: "ข้อความหลังคำว่า 'สถานีไฟฟ้า' ในหัวข้อเรื่อง"
+              },
               docNumber: { type: Type.STRING },
-              equipmentId: { type: Type.STRING },
-              details: { type: Type.STRING },
+              equipmentId: { 
+                type: Type.STRING,
+                description: "รหัสอุปกรณ์ คั่นด้วยเครื่องหมายจุลภาคหากมีหลายรายการ"
+              },
+              details: { 
+                type: Type.STRING,
+                description: "รายละเอียดการชำรุด คั่นด้วยเครื่องหมายจุลภาคหากมีหลายรายการ"
+              },
               responsible: { type: Type.STRING },
               signedDate: { type: Type.STRING },
             },
