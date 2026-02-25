@@ -134,9 +134,16 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
           folderId = newFolder.data.id!;
         }
 
-        const fileName = data.docNumber 
-          ? `${data.docNumber}_${file.originalname}`
-          : file.originalname;
+        // Fix Thai filename encoding issue from multer
+        const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+        
+        // Construct a clean filename: [DocNumber]_[Substation].pdf
+        const cleanSubstation = substationName.replace(/[\\\/:*?"<>|]/g, "");
+        const cleanDocNumber = (data.docNumber || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\//g, "-");
+        
+        const fileName = cleanDocNumber 
+          ? `${cleanDocNumber}_${cleanSubstation}.pdf`
+          : originalName;
 
         const fileMetadata = {
           name: fileName,
