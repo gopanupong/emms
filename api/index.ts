@@ -107,11 +107,15 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
     if (file) {
       try {
-        const substation = (data.substation || "Unknown").replace(/'/g, "\\'");
+        let substationName = (data.substation || "Unknown").trim();
+        // Normalize: Remove "สถานีไฟฟ้า" prefix to group folders with similar names together
+        substationName = substationName.replace(/^สถานีไฟฟ้า/, "").trim();
+        
+        const escapedSubstation = substationName.replace(/'/g, "\\'");
         let folderId = "";
         
         const folderSearch = await drive.files.list({
-          q: `name = '${substation}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
+          q: `name = '${escapedSubstation}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
           fields: "files(id)",
         });
 
@@ -119,7 +123,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
           folderId = folderSearch.data.files[0].id!;
         } else {
           const folderMetadata = {
-            name: data.substation || "Unknown",
+            name: substationName,
             mimeType: "application/vnd.google-apps.folder",
             parents: [rootFolderId!],
           };
