@@ -12,7 +12,12 @@ app.use(express.json());
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
-const APP_URL = process.env.APP_URL;
+const APP_URL = process.env.APP_URL?.replace(/\/$/, "");
+
+const getOAuth2Client = () => {
+  const redirectUri = `${APP_URL}/api/auth/callback`;
+  return new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
+};
 
 // Method 1: Service Account (Fallback or for Sheets only if needed)
 const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -21,11 +26,7 @@ const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_K
 async function getAuthenticatedClient() {
   // Priority: OAuth2 Refresh Token (Method 2)
   if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN) {
-    const oauth2Client = new google.auth.OAuth2(
-      GOOGLE_CLIENT_ID,
-      GOOGLE_CLIENT_SECRET,
-      `${APP_URL}/api/auth/callback`
-    );
+    const oauth2Client = getOAuth2Client();
     oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
     return oauth2Client;
   }
@@ -50,7 +51,7 @@ app.get(["/api/auth/init", "/auth/init"], (req, res) => {
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
     return res.status(400).send("Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or APP_URL in environment variables.");
   }
-  const oauth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, `${APP_URL}/api/auth/callback`);
+  const oauth2Client = getOAuth2Client();
   const url = oauth2Client.generateAuthUrl({
     access_type: "offline",
     scope: ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive.file"],
@@ -62,7 +63,7 @@ app.get(["/api/auth/init", "/auth/init"], (req, res) => {
 app.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
   const { code } = req.query;
   try {
-    const oauth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, `${APP_URL}/api/auth/callback`);
+    const oauth2Client = getOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code as string);
     res.send(`
       <div style="font-family: sans-serif; padding: 40px; line-height: 1.6; max-width: 600px; margin: 0 auto;">
