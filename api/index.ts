@@ -170,7 +170,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
     }
 
     const values = [[
-      new Date().toLocaleString('th-TH'),
+      new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
       data.substation,
       data.docNumber,
       data.equipmentId,
