@@ -175,6 +175,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       data.docNumber,
       data.equipmentId,
       data.details,
+      data.detailsAI,
       data.responsible,
       data.status,
       data.signedDate,
@@ -183,7 +184,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${sheetName}!A:I`,
+      range: `${sheetName}!A:J`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });

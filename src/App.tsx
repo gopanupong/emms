@@ -28,6 +28,7 @@ interface RepairData {
   docNumber: string;
   equipmentId: string;
   details: string;
+  detailsAI: string;
   responsible: string;
   status: 'อยู่ระหว่างดำเนินการ' | 'แก้ไขเสร็จแล้ว';
   signedDate: string;
@@ -38,6 +39,7 @@ const INITIAL_DATA: RepairData = {
   docNumber: '',
   equipmentId: '',
   details: '',
+  detailsAI: '',
   responsible: '',
   status: 'อยู่ระหว่างดำเนินการ',
   signedDate: '',
@@ -112,7 +114,8 @@ export default function App() {
                 - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
                 - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
                 - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
-                - details: รายละเอียดการชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
+                - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ)
+                - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ ไม่ใช้ภาษาพูด)
                 - responsible: หน่วยงานที่รับผิดชอบ
                 - signedDate: วันที่ผู้บริหารเซ็น (ระบุเป็น วว/ดด/ปปปป)
                 
@@ -137,12 +140,16 @@ export default function App() {
               },
               details: { 
                 type: Type.STRING,
-                description: "รายละเอียดการชำรุด คั่นด้วยเครื่องหมายจุลภาคหากมีหลายรายการ"
+                description: "รายละเอียดการชำรุด (ข้อความต้นฉบับจาก PDF)"
+              },
+              detailsAI: { 
+                type: Type.STRING,
+                description: "รายละเอียดการชำรุด (เรียบเรียงเป็นภาษาราชการ)"
               },
               responsible: { type: Type.STRING },
               signedDate: { type: Type.STRING },
             },
-            required: ["substation", "docNumber", "equipmentId", "details", "responsible", "signedDate"],
+            required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
           },
         },
       });
@@ -359,15 +366,27 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className="text-[11px] font-bold uppercase tracking-wider text-purple-400">รายละเอียดการชำรุด</label>
-                    <textarea 
-                      rows={3}
-                      value={repairData.details}
-                      onChange={(e) => setRepairData({ ...repairData, details: e.target.value })}
-                      className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all resize-none"
-                      placeholder="ระบุรายละเอียดอาการชำรุด"
-                    />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-purple-400">รายละเอียดการชำรุด (ต้นฉบับ)</label>
+                      <textarea 
+                        rows={3}
+                        value={repairData.details}
+                        onChange={(e) => setRepairData({ ...repairData, details: e.target.value })}
+                        className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all resize-none"
+                        placeholder="ระบุรายละเอียดอาการชำรุด"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-purple-400">รายละเอียดการชำรุด (ภาษาราชการ)</label>
+                      <textarea 
+                        rows={3}
+                        value={repairData.detailsAI}
+                        onChange={(e) => setRepairData({ ...repairData, detailsAI: e.target.value })}
+                        className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all resize-none border-2 border-purple-200"
+                        placeholder="AI ประมวลผลเป็นภาษาราชการ..."
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
