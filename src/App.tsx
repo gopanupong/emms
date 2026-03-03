@@ -14,7 +14,6 @@ import {
   Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GoogleGenAI, Type } from "@google/genai";
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -73,96 +72,31 @@ export default function App() {
   };
 
   const extractData = async (file: File) => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    
-    if (!apiKey) {
-      console.error('Gemini API Key is missing. Please set VITE_GEMINI_API_KEY in environment variables.');
-      setMessage({ type: 'error', text: 'ไม่พบ API Key (VITE_GEMINI_API_KEY) กรุณาตรวจสอบการตั้งค่าใน Vercel' });
-      return;
-    }
-
     setIsExtracting(true);
     setMessage(null);
     try {
-      const ai = new GoogleGenAI({ apiKey });
-      
-      // Convert file to base64
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve(base64);
-        };
-        reader.readAsDataURL(file);
-      });
-      const base64Data = await base64Promise;
+      const formData = new FormData();
+      formData.append('file', file);
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: [
-          {
-            parts: [
-              {
-                inlineData: {
-                  mimeType: file.type,
-                  data: base64Data,
-                },
-              },
-              {
-                text: `Extract repair information from this document in Thai. 
-                Return a JSON object with these fields:
-                - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
-                - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
-                - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
-                - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ)
-                - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน)
-                - responsible: หน่วยงานที่รับผิดชอบ
-                - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป)
-                
-                If a field is not found, leave it as an empty string.`,
-              },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              substation: { 
-                type: Type.STRING,
-                description: "ข้อความหลังคำว่า 'สถานีไฟฟ้า' ในหัวข้อเรื่อง"
-              },
-              docNumber: { type: Type.STRING },
-              equipmentId: { 
-                type: Type.STRING,
-                description: "รหัสอุปกรณ์ คั่นด้วยเครื่องหมายจุลภาคหากมีหลายรายการ"
-              },
-              details: { 
-                type: Type.STRING,
-                description: "รายละเอียดการชำรุด (ข้อความต้นฉบับจาก PDF)"
-              },
-              detailsAI: { 
-                type: Type.STRING,
-                description: "รายละเอียดการชำรุด (เรียบเรียงเป็นภาษาราชการ)"
-              },
-              responsible: { type: Type.STRING },
-              signedDate: { type: Type.STRING },
-            },
-            required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
-          },
-        },
+      const res = await fetch('/api/ai/extract', {
+        method: 'POST',
+        body: formData,
       });
 
-      const extracted = JSON.parse(response.text || '{}');
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'AI Extraction failed');
+      }
+
+      const extracted = await res.json();
       setRepairData({
         ...INITIAL_DATA,
         ...extracted,
         status: 'อยู่ระหว่างดำเนินการ'
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('AI Extraction failed', error);
-      setMessage({ type: 'error', text: 'AI ไม่สามารถดึงข้อมูลได้ โปรดกรอกข้อมูลด้วยตนเอง' });
+      setMessage({ type: 'error', text: `AI ไม่สามารถดึงข้อมูลได้: ${error.message}` });
     } finally {
       setIsExtracting(false);
     }

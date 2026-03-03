@@ -4,7 +4,12 @@ import multer from "multer";
 import fs from "fs";
 import os from "os";
 
+import { GoogleGenAI, Type } from "@google/genai";
+
 const router = express.Router();
+
+// Gemini AI Setup
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Method 2: OAuth2 with Refresh Token
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
@@ -41,6 +46,83 @@ async function getAuthenticatedClient() {
 
   throw new Error("Google credentials not configured. Please set GOOGLE_REFRESH_TOKEN or Service Account keys.");
 }
+
+// --- Multer Setup ---
+const upload = multer({ dest: os.tmpdir() });
+
+// AI Extraction Route
+router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
+  console.log("AI Extraction requested");
+  try {
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not configured on the server.");
+    }
+
+    const file = (req as any).file;
+    if (!file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    
+    const fileBuffer = fs.readFileSync(file.path);
+    const base64Data = fileBuffer.toString("base64");
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: file.mimetype,
+                data: base64Data,
+              },
+            },
+            {
+              text: `Extract repair information from this document in Thai. 
+              Return a JSON object with these fields:
+              - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
+              - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
+              - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
+              - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ)
+              - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน)
+              - responsible: หน่วยงานที่รับผิดชอบ
+              - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป)
+              
+              If a field is not found, leave it as an empty string.`,
+            },
+          ],
+        },
+      ],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            substation: { type: Type.STRING },
+            docNumber: { type: Type.STRING },
+            equipmentId: { type: Type.STRING },
+            details: { type: Type.STRING },
+            detailsAI: { type: Type.STRING },
+            responsible: { type: Type.STRING },
+            signedDate: { type: Type.STRING },
+          },
+          required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
+        },
+      },
+    });
+
+    // Cleanup temp file
+    fs.unlinkSync(file.path);
+
+    const extracted = JSON.parse(response.text || '{}');
+    res.json(extracted);
+  } catch (error: any) {
+    console.error("AI Extraction failed:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Auth Routes
 router.get(["/api/auth/init", "/auth/init"], (req, res) => {
@@ -82,8 +164,6 @@ router.get(["/api/auth/status", "/auth/status"], (req, res) => {
 });
 
 // --- Main Logic ---
-const upload = multer({ dest: os.tmpdir() });
-
 router.post("/api/repair/save", upload.single("file"), async (req, res) => {
   console.log("Save repair data requested");
   try {
