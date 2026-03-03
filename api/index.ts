@@ -68,56 +68,81 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
     const fileBuffer = fs.readFileSync(file.path);
     const base64Data = fileBuffer.toString("base64");
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        {
-          parts: [
+    // Retry logic for 503 errors
+    let attempt = 0;
+    const maxAttempts = 2;
+    let lastError: any = null;
+
+    while (attempt <= maxAttempts) {
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.1-pro-preview",
+          contents: [
             {
-              inlineData: {
-                mimeType: file.mimetype,
-                data: base64Data,
-              },
-            },
-            {
-              text: `Extract repair information from this document in Thai. 
-              Return a JSON object with these fields:
-              - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
-              - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
-              - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
-              - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ)
-              - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน)
-              - responsible: หน่วยงานที่รับผิดชอบ
-              - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป)
-              
-              If a field is not found, leave it as an empty string.`,
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: file.mimetype,
+                    data: base64Data,
+                  },
+                },
+                {
+                  text: `Extract repair information from this document in Thai. 
+                  Return a JSON object with these fields:
+                  - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
+                  - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
+                  - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
+                  - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ)
+                  - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน)
+                  - responsible: หน่วยงานที่รับผิดชอบ
+                  - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป)
+                  
+                  If a field is not found, leave it as an empty string.`,
+                },
+              ],
             },
           ],
-        },
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            substation: { type: Type.STRING },
-            docNumber: { type: Type.STRING },
-            equipmentId: { type: Type.STRING },
-            details: { type: Type.STRING },
-            detailsAI: { type: Type.STRING },
-            responsible: { type: Type.STRING },
-            signedDate: { type: Type.STRING },
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                substation: { type: Type.STRING },
+                docNumber: { type: Type.STRING },
+                equipmentId: { type: Type.STRING },
+                details: { type: Type.STRING },
+                detailsAI: { type: Type.STRING },
+                responsible: { type: Type.STRING },
+                signedDate: { type: Type.STRING },
+              },
+              required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
+            },
           },
-          required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
-        },
-      },
-    });
+        });
 
-    // Cleanup temp file
-    fs.unlinkSync(file.path);
+        // Cleanup temp file
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
-    const extracted = JSON.parse(response.text || '{}');
-    res.json(extracted);
+        const extracted = JSON.parse(response.text || '{}');
+        return res.json(extracted);
+      } catch (error: any) {
+        lastError = error;
+        // If it's a 503 error, wait a bit and retry
+        if (error.message?.includes("503") || error.status === 503) {
+          attempt++;
+          if (attempt <= maxAttempts) {
+            console.log(`AI busy (503), retrying attempt ${attempt}...`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Wait 2s, then 4s
+            continue;
+          }
+        }
+        break;
+      }
+    }
+
+    // If we reach here, it means all attempts failed
+    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    throw lastError;
   } catch (error: any) {
     console.error("AI Extraction failed:", error);
     res.status(500).json({ error: error.message });
