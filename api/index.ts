@@ -68,15 +68,15 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
     const fileBuffer = fs.readFileSync(file.path);
     const base64Data = fileBuffer.toString("base64");
 
-    // Retry logic for 503 errors
+    // Retry logic for 503 errors (High Demand)
     let attempt = 0;
-    const maxAttempts = 2;
+    const maxAttempts = 3; // Increase to 3 attempts
     let lastError: any = null;
 
     while (attempt <= maxAttempts) {
       try {
         const response = await ai.models.generateContent({
-          model: "gemini-3.1-pro-preview",
+          model: "gemini-flash-latest", // Use latest flash for better availability
           contents: [
             {
               parts: [
@@ -127,12 +127,15 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
         return res.json(extracted);
       } catch (error: any) {
         lastError = error;
-        // If it's a 503 error, wait a bit and retry
-        if (error.message?.includes("503") || error.status === 503) {
+        // If it's a 503 error or 429 (Rate Limit), wait and retry
+        const isRetryable = error.message?.includes("503") || error.status === 503 || error.status === 429;
+        
+        if (isRetryable) {
           attempt++;
           if (attempt <= maxAttempts) {
-            console.log(`AI busy (503), retrying attempt ${attempt}...`);
-            await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Wait 2s, then 4s
+            const delay = 3000 * attempt; // 3s, 6s, 9s
+            console.log(`AI busy or rate limited, retrying in ${delay}ms (attempt ${attempt})...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
         }
@@ -142,6 +145,14 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
 
     // If we reach here, it means all attempts failed
     if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    
+    // Custom friendly error message for 503
+    if (lastError?.status === 503 || lastError?.message?.includes("503")) {
+      return res.status(503).json({ 
+        error: "ขณะนี้ระบบ AI ของ Google มีผู้ใช้งานจำนวนมาก กรุณารอสัก 10-20 วินาทีแล้วลองใหม่อีกครั้งครับ" 
+      });
+    }
+    
     throw lastError;
   } catch (error: any) {
     console.error("AI Extraction failed:", error);
