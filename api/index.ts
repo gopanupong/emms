@@ -4,11 +4,9 @@ import multer from "multer";
 import fs from "fs";
 import os from "os";
 
-const app = express();
+const router = express.Router();
 
-app.use(express.json());
-
-// Method 2: OAuth2 with Refresh Token (Acts as the owner of the token)
+// Method 2: OAuth2 with Refresh Token
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REFRESH_TOKEN = process.env.GOOGLE_REFRESH_TOKEN;
@@ -19,19 +17,17 @@ const getOAuth2Client = () => {
   return new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
 };
 
-// Method 1: Service Account (Fallback or for Sheets only if needed)
+// Method 1: Service Account
 const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
 async function getAuthenticatedClient() {
-  // Priority: OAuth2 Refresh Token (Method 2)
   if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN) {
     const oauth2Client = getOAuth2Client();
     oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
     return oauth2Client;
   }
 
-  // Fallback: Service Account (Method 1)
   if (SERVICE_ACCOUNT_EMAIL && SERVICE_ACCOUNT_PRIVATE_KEY) {
     return new google.auth.JWT({
       email: SERVICE_ACCOUNT_EMAIL,
@@ -47,7 +43,8 @@ async function getAuthenticatedClient() {
 }
 
 // Auth Routes
-app.get(["/api/auth/init", "/auth/init"], (req, res) => {
+router.get(["/api/auth/init", "/auth/init"], (req, res) => {
+  console.log("Auth init requested");
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
     return res.status(400).send("Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or APP_URL in environment variables.");
   }
@@ -60,7 +57,7 @@ app.get(["/api/auth/init", "/auth/init"], (req, res) => {
   res.redirect(url);
 });
 
-app.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
+router.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
   const { code } = req.query;
   try {
     const oauth2Client = getOAuth2Client();
@@ -80,15 +77,23 @@ app.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
   }
 });
 
-app.get(["/api/auth/status", "/auth/status"], (req, res) => {
+router.get(["/api/auth/status", "/auth/status"], (req, res) => {
   res.json({ isAuthenticated: !!GOOGLE_REFRESH_TOKEN });
 });
 
 // --- Main Logic ---
 const upload = multer({ dest: os.tmpdir() });
 
-app.post("/api/repair/save", upload.single("file"), async (req, res) => {
+router.post("/api/repair/save", upload.single("file"), async (req, res) => {
+  console.log("Save repair data requested");
   try {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
+
+    if (!spreadsheetId) {
+      throw new Error("GOOGLE_SHEET_ID is not configured in environment variables.");
+    }
+
     const auth = await getAuthenticatedClient();
     const sheets = google.sheets({ version: "v4", auth });
     const drive = google.drive({ version: "v3", auth });
@@ -96,19 +101,27 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
     const data = JSON.parse(req.body.data);
     const file = (req as any).file;
 
-    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
-    const rootFolderId = process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
-
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
     const sheetName = spreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
+
+    // Get current row count to determine the next run number
+    const sheetData = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:A`,
+    });
+    const rowCount = sheetData.data.values ? sheetData.data.values.length : 0;
+    const runNumber = String(rowCount).padStart(3, '0'); // e.g., 001, 002
 
     let fileUrl = "";
     let uploadError = "";
 
     if (file) {
       try {
+        if (!rootFolderId) {
+          throw new Error("GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured.");
+        }
+
         let substationName = (data.substation || "Unknown").trim();
-        // Normalize: Remove "สถานีไฟฟ้า" prefix to group folders with similar names together
         substationName = substationName.replace(/^สถานีไฟฟ้า/, "").trim();
         
         const escapedSubstation = substationName.replace(/'/g, "\\'");
@@ -134,16 +147,11 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
           folderId = newFolder.data.id!;
         }
 
-        // Fix Thai filename encoding issue from multer
-        const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-        
-        // Construct a clean filename: [DocNumber]_[Substation].pdf
         const cleanSubstation = substationName.replace(/[\\\/:*?"<>|]/g, "");
         const cleanDocNumber = (data.docNumber || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\//g, "-");
+        const cleanSignedDate = (data.signedDate || "").replace(/\//g, "");
         
-        const fileName = cleanDocNumber 
-          ? `${cleanDocNumber}_${cleanSubstation}.pdf`
-          : originalName;
+        const fileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}_${cleanSignedDate}.pdf`;
 
         const fileMetadata = {
           name: fileName,
@@ -171,6 +179,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
     const values = [[
       new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+      runNumber,
       data.substation,
       data.docNumber,
       data.equipmentId,
@@ -184,7 +193,7 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${sheetName}!A:J`,
+      range: `${sheetName}!A:K`,
       valueInputOption: "USER_ENTERED",
       requestBody: { values },
     });
@@ -195,9 +204,9 @@ app.post("/api/repair/save", upload.single("file"), async (req, res) => {
       res.json({ success: true });
     }
   } catch (error: any) {
-    console.error("Error saving repair data", error);
+    console.error("Error saving repair data:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
-export default app;
+export default router;
