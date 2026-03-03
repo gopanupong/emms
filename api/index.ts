@@ -267,10 +267,11 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
         const cleanDocNumber = (data.docNumber || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\//g, "-");
         const cleanSignedDate = (data.signedDate || "").replace(/\//g, "");
         
-        const fileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}_${cleanSignedDate}.pdf`;
+        const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}_${cleanSignedDate}.pdf`;
 
+        // 1. Upload with temporary name first (or original name)
         const fileMetadata = {
-          name: fileName,
+          name: `uploading_${Date.now()}.pdf`,
           parents: [folderId],
         };
         const media = {
@@ -282,40 +283,75 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
           media: media,
           fields: "id, webViewLink",
         });
+        
+        const fileId = uploadedFile.data.id!;
         fileUrl = uploadedFile.data.webViewLink!;
+
+        // 2. Prepare values for Sheets
+        const values = [[
+          new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+          runNumber,
+          data.substation,
+          data.docNumber,
+          data.equipmentId,
+          data.details,
+          data.detailsAI,
+          data.responsible,
+          data.status,
+          data.signedDate,
+          fileUrl
+        ]];
+
+        // 3. Append to Sheets
+        await sheets.spreadsheets.values.append({
+          spreadsheetId,
+          range: `${sheetName}!A:K`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values },
+        });
+
+        // 4. Rename the file in Drive to the final name after successful save
+        await drive.files.update({
+          fileId: fileId,
+          requestBody: {
+            name: finalFileName
+          }
+        });
+
       } catch (err: any) {
-        console.error("Drive upload failed:", err);
-        uploadError = ` (ไฟล์อัปโหลดไม่สำเร็จ: ${err.message})`;
+        console.error("Drive/Sheets operation failed:", err);
+        uploadError = ` (ดำเนินการไม่สำเร็จ: ${err.message})`;
       } finally {
         if (file && fs.existsSync(file.path)) {
           fs.unlinkSync(file.path);
         }
       }
+    } else {
+      // If no file, just append to sheets
+      const values = [[
+        new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+        runNumber,
+        data.substation,
+        data.docNumber,
+        data.equipmentId,
+        data.details,
+        data.detailsAI,
+        data.responsible,
+        data.status,
+        data.signedDate,
+        ""
+      ]];
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId,
+        range: `${sheetName}!A:K`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values },
+      });
     }
 
-    const values = [[
-      new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
-      runNumber,
-      data.substation,
-      data.docNumber,
-      data.equipmentId,
-      data.details,
-      data.detailsAI,
-      data.responsible,
-      data.status,
-      data.signedDate,
-      fileUrl || (uploadError ? "อัปโหลดล้มเหลว" : "")
-    ]];
-
-    await sheets.spreadsheets.values.append({
-      spreadsheetId,
-      range: `${sheetName}!A:K`,
-      valueInputOption: "USER_ENTERED",
-      requestBody: { values },
-    });
-
     if (uploadError) {
-      res.json({ success: true, warning: `บันทึกข้อมูลลงตารางแล้ว แต่${uploadError}` });
+      res.status(500).json({ error: uploadError });
     } else {
       res.json({ success: true });
     }
