@@ -241,7 +241,7 @@ router.get("/api/repair/list", async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:L`,
+      range: `${sheetName}!A:M`,
     });
 
     const rows = response.data.values || [];
@@ -258,11 +258,11 @@ router.get("/api/repair/list", async (req, res) => {
       equipmentId: row[4] || "",
       details: row[5] || "",
       detailsAI: row[6] || "",
-      completionDate: (row[7] || "").trim(),
       responsible: row[8] || "",
       status: row[9] || "",
       signedDate: row[10] || "",
       fileUrl: row[11] || "",
+      completionDate: (row[12] || "").trim(), // Column M
     }));
 
     res.json(data);
@@ -376,17 +376,18 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
           data.equipmentId,
           data.details,
           data.detailsAI,
-          "", // completionDate (Column H)
+          "", // Column H (unused for completion now)
           data.responsible,
           data.status,
           data.signedDate,
-          fileUrl
+          fileUrl,
+          ""  // completionDate (Column M)
         ]];
 
         // 3. Append to Sheets
         await sheets.spreadsheets.values.append({
           spreadsheetId,
-          range: `${sheetName}!A:L`,
+          range: `${sheetName}!A:M`,
           valueInputOption: "USER_ENTERED",
           requestBody: { values },
         });
@@ -417,16 +418,17 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
         data.equipmentId,
         data.details,
         data.detailsAI,
-        "", // completionDate (Column H)
+        "", // Column H
         data.responsible,
         data.status,
         data.signedDate,
-        ""
+        "",
+        ""  // Column M
       ]];
 
       await sheets.spreadsheets.values.append({
         spreadsheetId,
-        range: `${sheetName}!A:L`,
+        range: `${sheetName}!A:M`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values },
       });

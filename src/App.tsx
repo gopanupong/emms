@@ -177,9 +177,11 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const isCompleted = (dateStr: string | undefined) => {
     if (!dateStr) return false;
     const trimmed = dateStr.trim();
-    if (trimmed === '' || trimmed === '-') return false;
-    // Check if it contains at least one digit (to be considered a date)
-    return /\d/.test(trimmed);
+    // A valid date string should have at least 5 characters (e.g., "1/1/25")
+    // and must contain at least one digit.
+    if (trimmed.length < 5 || !/\d/.test(trimmed)) return false;
+    if (trimmed === '-' || trimmed === 'ยังไม่เสร็จ') return false;
+    return true;
   };
 
   const stats = {
