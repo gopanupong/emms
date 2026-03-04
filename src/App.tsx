@@ -131,13 +131,16 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
       // Robust date parsing: handle DD/MM/YYYY, YYYY-MM-DD, etc.
       let itemDay, itemMonth, itemYear;
       
-      if (item.signedDate.includes('/')) {
-        const parts = item.signedDate.split('/');
+      const cleanDate = toArabicNumerals(item.signedDate || "").trim();
+      if (!cleanDate) return filterType === 'all';
+
+      if (cleanDate.includes('/')) {
+        const parts = cleanDate.split('/');
         itemDay = parseInt(parts[0]);
         itemMonth = parseInt(parts[1]);
         itemYear = parseInt(parts[2]);
-      } else if (item.signedDate.includes('-')) {
-        const parts = item.signedDate.split('-');
+      } else if (cleanDate.includes('-')) {
+        const parts = cleanDate.split('-');
         if (parts[0].length === 4) { // YYYY-MM-DD
           itemYear = parseInt(parts[0]);
           itemMonth = parseInt(parts[1]);
@@ -149,11 +152,19 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
         }
       }
 
+      // Normalize Year: If it's B.E. (e.g. 2569), convert to C.E. (2026) for comparison
+      // or if filterYear is B.E., normalize both to C.E.
+      let normalizedItemYear = itemYear;
+      if (itemYear > 2400) normalizedItemYear -= 543;
+      
+      let normalizedFilterYear = filterYear;
+      if (filterYear > 2400) normalizedFilterYear -= 543;
+
       const matchesDate = filterType === 'all' 
         ? true 
         : filterType === 'year' 
-          ? (itemYear === filterYear)
-          : (itemYear === filterYear && itemMonth === filterMonth);
+          ? (normalizedItemYear === normalizedFilterYear)
+          : (normalizedItemYear === normalizedFilterYear && itemMonth === filterMonth);
 
       // If date parsing failed but filter is 'all', still show it
       const finalMatchesDate = (filterType === 'all') ? true : matchesDate;
