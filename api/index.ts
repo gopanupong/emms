@@ -258,10 +258,10 @@ router.get("/api/repair/list", async (req, res) => {
       equipmentId: row[4] || "",
       details: row[5] || "",
       detailsAI: row[6] || "",
-      responsible: row[8] || "",
-      status: row[9] || "",
-      signedDate: row[10] || "",
-      fileUrl: row[11] || "",
+      responsible: row[7] || "", // Column H
+      status: row[8] || "",      // Column I
+      signedDate: row[9] || "",  // Column J
+      fileUrl: row[10] || "",    // Column K
       completionDate: (row[12] || "").trim(), // Column M
     }));
 
@@ -376,12 +376,12 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
           data.equipmentId,
           data.details,
           data.detailsAI,
-          "", // Column H (unused for completion now)
-          data.responsible,
-          data.status,
-          data.signedDate,
-          fileUrl,
-          ""  // completionDate (Column M)
+          data.responsible, // Column H
+          data.status,      // Column I
+          data.signedDate,  // Column J
+          fileUrl,          // Column K
+          "",               // Column L
+          ""                // Column M (completionDate)
         ]];
 
         // 3. Append to Sheets
@@ -418,12 +418,12 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
         data.equipmentId,
         data.details,
         data.detailsAI,
-        "", // Column H
-        data.responsible,
-        data.status,
-        data.signedDate,
-        "",
-        ""  // Column M
+        data.responsible, // Column H
+        data.status,      // Column I
+        data.signedDate,  // Column J
+        "",               // Column K (fileUrl)
+        "",               // Column L
+        ""                // Column M (completionDate)
       ]];
 
       await sheets.spreadsheets.values.append({
