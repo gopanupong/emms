@@ -152,8 +152,15 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
         }
       }
 
+      if (isNaN(itemYear) || isNaN(itemMonth)) return filterType === 'all';
+
+      // Handle 2-digit years (e.g., "69" -> 2569 or "26" -> 2026)
+      if (itemYear < 100) {
+        if (itemYear > 50) itemYear += 2500; // Assume B.E.
+        else itemYear += 2000; // Assume C.E.
+      }
+
       // Normalize Year: If it's B.E. (e.g. 2569), convert to C.E. (2026) for comparison
-      // or if filterYear is B.E., normalize both to C.E.
       let normalizedItemYear = itemYear;
       if (itemYear > 2400) normalizedItemYear -= 543;
       
