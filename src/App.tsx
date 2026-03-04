@@ -99,9 +99,9 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const currentYearBE = new Date().getFullYear() + 543;
   const currentMonth = new Date().getMonth() + 1;
   
+  const [filterType, setFilterType] = useState<'month' | 'year' | 'all'>('all');
   const [filterMonth, setFilterMonth] = useState<number>(currentMonth);
   const [filterYear, setFilterYear] = useState<number>(currentYearBE);
-  const [filterType, setFilterType] = useState<'month' | 'year' | 'all'>('all');
 
   useEffect(() => {
     fetchData();
@@ -152,8 +152,11 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
       const matchesDate = filterType === 'all' 
         ? true 
         : filterType === 'year' 
-          ? itemYear === filterYear 
+          ? (itemYear === filterYear)
           : (itemYear === filterYear && itemMonth === filterMonth);
+
+      // If date parsing failed but filter is 'all', still show it
+      const finalMatchesDate = (filterType === 'all') ? true : matchesDate;
 
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch = !searchQuery || 
@@ -162,9 +165,10 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
         item.docNumber.toLowerCase().includes(searchLower) ||
         item.responsible.toLowerCase().includes(searchLower) ||
         item.details.toLowerCase().includes(searchLower) ||
-        item.runNumber.toLowerCase().includes(searchLower);
+        item.runNumber.toLowerCase().includes(searchLower) ||
+        item.detailsAI.toLowerCase().includes(searchLower);
 
-      return matchesDate && matchesSearch;
+      return finalMatchesDate && matchesSearch;
     } catch (e) {
       return false;
     }
