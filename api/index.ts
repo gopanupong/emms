@@ -258,7 +258,7 @@ router.get("/api/repair/list", async (req, res) => {
       equipmentId: row[4] || "",
       details: row[5] || "",
       detailsAI: row[6] || "",
-      completionDate: row[7] || "",
+      completionDate: (row[7] || "").trim(),
       responsible: row[8] || "",
       status: row[9] || "",
       signedDate: row[10] || "",

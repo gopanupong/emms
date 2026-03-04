@@ -174,10 +174,18 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
     }
   });
 
+  const isCompleted = (dateStr: string | undefined) => {
+    if (!dateStr) return false;
+    const trimmed = dateStr.trim();
+    if (trimmed === '' || trimmed === '-') return false;
+    // Check if it contains at least one digit (to be considered a date)
+    return /\d/.test(trimmed);
+  };
+
   const stats = {
     total: filteredData.length,
-    inProgress: filteredData.filter(i => !i.completionDate || i.completionDate.trim() === '').length,
-    completed: filteredData.filter(i => i.completionDate && i.completionDate.trim() !== '').length,
+    inProgress: filteredData.filter(i => !isCompleted(i.completionDate)).length,
+    completed: filteredData.filter(i => isCompleted(i.completionDate)).length,
   };
 
   const chartData = [
@@ -447,9 +455,9 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
                       <td className="px-4 py-4">
                         <span className={cn(
                           "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter",
-                          (item.completionDate && item.completionDate.trim() !== '') ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                          isCompleted(item.completionDate) ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
                         )}>
-                          {(item.completionDate && item.completionDate.trim() !== '') ? 'แก้ไขเสร็จแล้ว' : 'อยู่ระหว่างดำเนินการ'}
+                          {isCompleted(item.completionDate) ? 'แก้ไขเสร็จแล้ว' : 'อยู่ระหว่างดำเนินการ'}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-xs text-purple-500">{item.signedDate}</td>
