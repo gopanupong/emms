@@ -8,6 +8,7 @@ import {
   Loader2, 
   LogOut, 
   ExternalLink,
+  LogIn,
   Plus,
   Trash2,
   ChevronRight,
@@ -393,8 +394,21 @@ export default function App() {
                           message.type === 'success' ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
                         )}
                       >
-                        {message.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
-                        {message.text}
+                        {message.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
+                        <div className="flex-1">
+                          {message.text}
+                          {message.text.includes('invalid_grant') && (
+                            <div className="mt-3">
+                              <a 
+                                href="/api/auth/init" 
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-all shadow-sm active:scale-95"
+                              >
+                                <LogIn className="w-4 h-4" />
+                                ยืนยันตัวตนใหม่ (Re-authenticate)
+                              </a>
+                            </div>
+                          )}
+                        </div>
                       </motion.div>
                     )}
                   </AnimatePresence>

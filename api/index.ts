@@ -172,6 +172,12 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
         error: "ขณะนี้ระบบ AI ของ Google มีผู้ใช้งานจำนวนมาก กรุณารอสัก 10-20 วินาทีแล้วลองใหม่อีกครั้งครับ" 
       });
     }
+
+    if (lastError?.message?.includes("invalid_grant")) {
+      return res.status(401).json({
+        error: "สิทธิ์การเข้าถึง Google หมดอายุ (invalid_grant) กรุณาทำการยืนยันตัวตนใหม่ที่ " + APP_URL + "/api/auth/init"
+      });
+    }
     
     throw lastError;
   } catch (error: any) {
@@ -384,7 +390,11 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
     }
   } catch (error: any) {
     console.error("Error saving repair data:", error);
-    res.status(500).json({ error: error.message });
+    let errorMessage = error.message;
+    if (errorMessage.includes("invalid_grant")) {
+      errorMessage = "สิทธิ์การเข้าถึง Google หมดอายุ (invalid_grant) กรุณาทำการยืนยันตัวตนใหม่ที่ " + APP_URL + "/api/auth/init";
+    }
+    res.status(500).json({ error: errorMessage });
   }
 });
 
