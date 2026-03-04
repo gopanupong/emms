@@ -50,6 +50,17 @@ async function getAuthenticatedClient() {
 // --- Multer Setup ---
 const upload = multer({ dest: os.tmpdir() });
 
+// --- Utilities ---
+function toArabicNumerals(str: string): string {
+  const thaiNumerals = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
+  const arabicNumerals = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  let result = str;
+  for (let i = 0; i < 10; i++) {
+    result = result.replace(new RegExp(thaiNumerals[i], "g"), arabicNumerals[i]);
+  }
+  return result;
+}
+
 // AI Extraction Route
 router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
   console.log("AI Extraction requested");
@@ -88,14 +99,15 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
                 },
                 {
                   text: `Extract repair information from this document in Thai. 
+                  IMPORTANT: Convert all Thai numerals (๐-๙) to Arabic numerals (0-9) in all extracted fields.
                   Return a JSON object with these fields:
                   - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
                   - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
                   - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
-                  - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ)
-                  - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน)
+                  - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ แต่ให้แปลงเลขไทยเป็นเลขอารบิก)
+                  - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน และใช้เลขอารบิกเท่านั้น)
                   - responsible: หน่วยงานที่รับผิดชอบ
-                  - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป)
+                  - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป ในรูปแบบเลขอารบิก)
                   
                   If a field is not found, leave it as an empty string.`,
                 },
@@ -124,6 +136,14 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
         if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
         const extracted = JSON.parse(response.text || '{}');
+        
+        // Final pass to ensure all Thai numerals are converted
+        Object.keys(extracted).forEach(key => {
+          if (typeof extracted[key] === 'string') {
+            extracted[key] = toArabicNumerals(extracted[key]);
+          }
+        });
+
         return res.json(extracted);
       } catch (error: any) {
         lastError = error;
@@ -215,6 +235,13 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
     const drive = google.drive({ version: "v3", auth });
     
     const data = JSON.parse(req.body.data);
+    // Convert all Thai numerals to Arabic numerals in the data
+    Object.keys(data).forEach(key => {
+      if (typeof data[key] === 'string') {
+        data[key] = toArabicNumerals(data[key]);
+      }
+    });
+
     const file = (req as any).file;
 
     const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });

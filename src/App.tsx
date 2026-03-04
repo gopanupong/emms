@@ -21,6 +21,16 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function toArabicNumerals(str: string): string {
+  const thaiNumerals = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
+  const arabicNumerals = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  let result = str;
+  for (let i = 0; i < 10; i++) {
+    result = result.replace(new RegExp(thaiNumerals[i], "g"), arabicNumerals[i]);
+  }
+  return result;
+}
+
 // --- Types ---
 interface RepairData {
   substation: string;
@@ -260,7 +270,7 @@ export default function App() {
                       <input 
                         type="text"
                         value={repairData.substation}
-                        onChange={(e) => setRepairData({ ...repairData, substation: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, substation: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all"
                         placeholder="ระบุชื่อสถานี"
                       />
@@ -270,7 +280,7 @@ export default function App() {
                       <input 
                         type="text"
                         value={repairData.docNumber}
-                        onChange={(e) => setRepairData({ ...repairData, docNumber: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, docNumber: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all"
                         placeholder="ระบุเลขที่เอกสาร"
                       />
@@ -283,7 +293,7 @@ export default function App() {
                       <input 
                         type="text"
                         value={repairData.equipmentId}
-                        onChange={(e) => setRepairData({ ...repairData, equipmentId: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, equipmentId: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all"
                         placeholder="ระบุรหัสอุปกรณ์"
                       />
@@ -293,7 +303,7 @@ export default function App() {
                       <input 
                         type="text"
                         value={repairData.responsible}
-                        onChange={(e) => setRepairData({ ...repairData, responsible: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, responsible: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all"
                         placeholder="ระบุหน่วยงาน"
                       />
@@ -306,7 +316,7 @@ export default function App() {
                       <textarea 
                         rows={3}
                         value={repairData.details}
-                        onChange={(e) => setRepairData({ ...repairData, details: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, details: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all resize-none"
                         placeholder="ระบุรายละเอียดอาการชำรุด"
                       />
@@ -316,7 +326,7 @@ export default function App() {
                       <textarea 
                         rows={3}
                         value={repairData.detailsAI}
-                        onChange={(e) => setRepairData({ ...repairData, detailsAI: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, detailsAI: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all resize-none border-2 border-purple-200"
                         placeholder="AI ประมวลผลเป็นภาษาราชการ..."
                       />
@@ -329,7 +339,7 @@ export default function App() {
                       <input 
                         type="text"
                         value={repairData.signedDate}
-                        onChange={(e) => setRepairData({ ...repairData, signedDate: e.target.value })}
+                        onChange={(e) => setRepairData({ ...repairData, signedDate: toArabicNumerals(e.target.value) })}
                         className="w-full bg-purple-50/30 border-none rounded-xl px-4 py-3 focus:ring-2 focus:ring-purple-900 transition-all"
                         placeholder="วว/ดด/ปปปป"
                       />
