@@ -225,6 +225,52 @@ router.get(["/api/auth/status", "/auth/status"], (req, res) => {
   res.json({ isAuthenticated: !!GOOGLE_REFRESH_TOKEN });
 });
 
+router.get("/api/repair/list", async (req, res) => {
+  console.log("Repair list requested");
+  try {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    if (!spreadsheetId) {
+      throw new Error("GOOGLE_SHEET_ID is not configured.");
+    }
+
+    const auth = await getAuthenticatedClient();
+    const sheets = google.sheets({ version: "v4", auth });
+
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetName = spreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
+
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A:K`,
+    });
+
+    const rows = response.data.values || [];
+    if (rows.length <= 1) {
+      return res.json([]);
+    }
+
+    // Skip header row and map to objects
+    const data = rows.slice(1).map((row) => ({
+      timestamp: row[0] || "",
+      runNumber: row[1] || "",
+      substation: row[2] || "",
+      docNumber: row[3] || "",
+      equipmentId: row[4] || "",
+      details: row[5] || "",
+      detailsAI: row[6] || "",
+      responsible: row[7] || "",
+      status: row[8] || "",
+      signedDate: row[9] || "",
+      fileUrl: row[10] || "",
+    }));
+
+    res.json(data);
+  } catch (error: any) {
+    console.error("Error fetching repair list:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // --- Main Logic ---
 router.post("/api/repair/save", upload.single("file"), async (req, res) => {
   console.log("Save repair data requested");

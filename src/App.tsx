@@ -12,11 +12,31 @@ import {
   Plus,
   Trash2,
   ChevronRight,
-  Settings
+  Settings,
+  LayoutDashboard,
+  Calendar,
+  Filter,
+  Search,
+  ArrowLeft
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
+  ResponsiveContainer,
+  Cell,
+  PieChart,
+  Pie
+} from 'recharts';
+import { format, parse, startOfMonth, endOfMonth, isWithinInterval, getYear, getMonth } from 'date-fns';
+import { th } from 'date-fns/locale';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -57,7 +77,306 @@ const INITIAL_DATA: RepairData = {
 
 // --- Components ---
 
+interface RepairItem extends RepairData {
+  timestamp: string;
+  runNumber: string;
+  fileUrl: string;
+}
+
+type View = 'form' | 'dashboard';
+
+// --- Components ---
+
+const Dashboard = ({ onBack }: { onBack: () => void }) => {
+  const [data, setData] = useState<RepairItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Default to current Thai year (BE)
+  const currentYearBE = new Date().getFullYear() + 543;
+  const currentMonth = new Date().getMonth() + 1;
+  
+  const [filterMonth, setFilterMonth] = useState<number>(currentMonth);
+  const [filterYear, setFilterYear] = useState<number>(currentYearBE);
+  const [filterType, setFilterType] = useState<'month' | 'year'>('month');
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      const res = await fetch('/api/repair/list');
+      const json = await res.json();
+      setData(json);
+    } catch (error) {
+      console.error('Failed to fetch data', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredData = data.filter(item => {
+    try {
+      const [d, m, y] = item.signedDate.split('/');
+      const itemYear = parseInt(y);
+      const itemMonth = parseInt(m);
+
+      const matchesDate = filterType === 'year' 
+        ? itemYear === filterYear 
+        : (itemYear === filterYear && itemMonth === filterMonth);
+
+      const searchLower = searchQuery.toLowerCase();
+      const matchesSearch = !searchQuery || 
+        item.substation.toLowerCase().includes(searchLower) ||
+        item.equipmentId.toLowerCase().includes(searchLower) ||
+        item.docNumber.toLowerCase().includes(searchLower) ||
+        item.responsible.toLowerCase().includes(searchLower) ||
+        item.details.toLowerCase().includes(searchLower) ||
+        item.runNumber.toLowerCase().includes(searchLower);
+
+      return matchesDate && matchesSearch;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  const stats = {
+    total: filteredData.length,
+    inProgress: filteredData.filter(i => i.status === 'อยู่ระหว่างดำเนินการ').length,
+    completed: filteredData.filter(i => i.status === 'แก้ไขเสร็จแล้ว').length,
+  };
+
+  const chartData = [
+    { name: 'อยู่ระหว่างดำเนินการ', value: stats.inProgress, color: '#F59E0B' },
+    { name: 'แก้ไขเสร็จแล้ว', value: stats.completed, color: '#10B981' },
+  ];
+
+  const substationData = Object.entries(
+    filteredData.reduce((acc, item) => {
+      acc[item.substation] = (acc[item.substation] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>)
+  ).map(([name, value]) => ({ name, value }))
+   .sort((a, b) => b.value - a.value)
+   .slice(0, 10);
+
+  const months = [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  ];
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 space-y-4">
+        <Loader2 className="w-10 h-10 text-purple-900 animate-spin" />
+        <p className="text-purple-400 font-medium">กำลังโหลดข้อมูล Dashboard...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={onBack}
+            className="p-2 hover:bg-purple-100 rounded-full transition-colors"
+          >
+            <ArrowLeft className="w-6 h-6 text-purple-900" />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-purple-900">Dashboard ผู้บริหาร</h2>
+            <p className="text-sm text-purple-400">สรุปภาพรวมงานซ่อมบำรุงอุปกรณ์</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 bg-white p-2 rounded-2xl shadow-sm border border-purple-100">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-purple-300" />
+            <input 
+              type="text"
+              placeholder="ค้นหา..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-4 py-2 bg-purple-50 border-none rounded-xl text-xs font-medium text-purple-900 focus:ring-2 focus:ring-purple-200 w-40 md:w-60"
+            />
+          </div>
+
+          <div className="h-6 w-px bg-purple-100 mx-1" />
+
+          <select 
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value as any)}
+            className="bg-purple-50 border-none rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wider text-purple-900 focus:ring-0"
+          >
+            <option value="month">รายเดือน</option>
+            <option value="year">รายปี</option>
+          </select>
+
+          {filterType === 'month' && (
+            <select 
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(parseInt(e.target.value))}
+              className="bg-purple-50 border-none rounded-xl px-3 py-2 text-xs font-bold text-purple-900 focus:ring-0"
+            >
+              {months.map((m, i) => (
+                <option key={i} value={i + 1}>{m}</option>
+              ))}
+            </select>
+          )}
+
+          <select 
+            value={filterYear}
+            onChange={(e) => setFilterYear(parseInt(e.target.value))}
+            className="bg-purple-50 border-none rounded-xl px-3 py-2 text-xs font-bold text-purple-900 focus:ring-0"
+          >
+            {[2567, 2568, 2569, 2570, 2571].map(y => (
+              <option key={y} value={y}>พ.ศ. {y}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
+          <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center">
+            <FileText className="w-6 h-6 text-purple-900" />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-purple-400">งานทั้งหมด</p>
+            <p className="text-2xl font-bold text-purple-900">{stats.total}</p>
+          </div>
+        </div>
+        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
+          <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
+            <Loader2 className="w-6 h-6 text-amber-600" />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">กำลังดำเนินการ</p>
+            <p className="text-2xl font-bold text-amber-600">{stats.inProgress}</p>
+          </div>
+        </div>
+        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
+          <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center">
+            <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">เสร็จสิ้นแล้ว</p>
+            <p className="text-2xl font-bold text-emerald-600">{stats.completed}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-white p-8 rounded-[32px] shadow-sm border border-purple-50 space-y-6">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">สัดส่วนสถานะงาน</h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={chartData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={5}
+                  dataKey="value"
+                >
+                  {chartData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" height={36}/>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-white p-8 rounded-[32px] shadow-sm border border-purple-50 space-y-6">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">10 อันดับสถานีที่แจ้งซ่อมสูงสุด</h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={substationData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" width={100} fontSize={10} />
+                <Tooltip />
+                <Bar dataKey="value" fill="#4F46E5" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-[32px] shadow-sm border border-purple-50 overflow-hidden">
+        <div className="p-8 border-b border-purple-50 flex items-center justify-between">
+          <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">รายการงานซ่อมบำรุง (Google Sheet View)</h3>
+          <span className="text-xs font-medium text-purple-400">แสดง {filteredData.length} รายการ</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse table-fixed min-w-[1200px]">
+            <thead>
+              <tr className="bg-purple-50/50">
+                <th className="w-20 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">เลขรัน</th>
+                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">สถานีไฟฟ้า</th>
+                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">เลขที่เอกสาร</th>
+                <th className="w-40 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">อุปกรณ์</th>
+                <th className="w-60 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">รายละเอียดความชำรุด</th>
+                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">ผู้รับผิดชอบ</th>
+                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">สถานะ</th>
+                <th className="w-28 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">วันที่เซ็น</th>
+                <th className="w-16 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-purple-50">
+              {filteredData.map((item, idx) => (
+                <tr key={idx} className="hover:bg-purple-50/30 transition-colors">
+                  <td className="px-4 py-4 text-xs font-mono text-purple-900">{item.runNumber}</td>
+                  <td className="px-4 py-4 text-xs font-bold text-purple-900">{item.substation}</td>
+                  <td className="px-4 py-4 text-xs text-purple-500">{item.docNumber}</td>
+                  <td className="px-4 py-4 text-xs text-purple-500 truncate" title={item.equipmentId}>{item.equipmentId}</td>
+                  <td className="px-4 py-4 text-xs text-purple-500 line-clamp-2 h-12 flex items-center" title={item.details}>{item.details}</td>
+                  <td className="px-4 py-4 text-xs text-purple-500">{item.responsible}</td>
+                  <td className="px-4 py-4">
+                    <span className={cn(
+                      "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter",
+                      item.status === 'แก้ไขเสร็จแล้ว' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                    )}>
+                      {item.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4 text-xs text-purple-500">{item.signedDate}</td>
+                  <td className="px-4 py-4 text-right">
+                    {item.fileUrl && (
+                      <a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-purple-400 hover:text-purple-900 transition-colors">
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {filteredData.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-6 py-12 text-center text-purple-300 text-sm italic">
+                    ไม่พบข้อมูลสำหรับเงื่อนไขที่เลือก
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
+  const [view, setView] = useState<View>('form');
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [repairData, setRepairData] = useState<RepairData>(INITIAL_DATA);
@@ -164,11 +483,42 @@ export default function App() {
             </div>
             <h1 className="text-lg font-semibold tracking-tight">EMMS</h1>
           </div>
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setView(view === 'form' ? 'dashboard' : 'form')}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all",
+                view === 'dashboard' 
+                  ? "bg-purple-900 text-white shadow-lg" 
+                  : "bg-purple-50 text-purple-900 hover:bg-purple-100"
+              )}
+            >
+              {view === 'form' ? (
+                <>
+                  <LayoutDashboard className="w-4 h-4" />
+                  Dashboard
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  แจ้งซ่อมใหม่
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-12">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+        <AnimatePresence mode="wait">
+          {view === 'form' ? (
+            <motion.div 
+              key="form"
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="grid grid-cols-1 lg:grid-cols-12 gap-12"
+            >
             {/* Left Column: Upload & Preview */}
             <div className="lg:col-span-5 space-y-8">
               <section className="space-y-4">
@@ -447,7 +797,18 @@ export default function App() {
                 </div>
               </section>
             </div>
-          </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="dashboard"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+          >
+            <Dashboard onBack={() => setView('form')} />
+          </motion.div>
+        )}
+        </AnimatePresence>
       </main>
 
       {/* Footer */}
