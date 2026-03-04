@@ -547,8 +547,11 @@ export default function App() {
       });
 
       if (!res.ok) {
+        if (res.status === 429) {
+          throw new Error('ขออภัยครับ โควตาการใช้งาน AI ชั่วคราวเต็มแล้ว (Rate Limit) รบกวนรอประมาณ 1-2 นาทีแล้วลองใหม่อีกครั้งครับ');
+        }
         const errorData = await res.json();
-        throw new Error(errorData.error || 'AI Extraction failed');
+        throw new Error(errorData.error || 'AI ไม่สามารถประมวลผลได้ในขณะนี้');
       }
 
       const extracted = await res.json();
