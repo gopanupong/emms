@@ -241,7 +241,7 @@ router.get("/api/repair/list", async (req, res) => {
 
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `${sheetName}!A:K`,
+      range: `${sheetName}!A:L`,
     });
 
     const rows = response.data.values || [];
@@ -258,10 +258,11 @@ router.get("/api/repair/list", async (req, res) => {
       equipmentId: row[4] || "",
       details: row[5] || "",
       detailsAI: row[6] || "",
-      responsible: row[7] || "",
-      status: row[8] || "",
-      signedDate: row[9] || "",
-      fileUrl: row[10] || "",
+      completionDate: row[7] || "",
+      responsible: row[8] || "",
+      status: row[9] || "",
+      signedDate: row[10] || "",
+      fileUrl: row[11] || "",
     }));
 
     res.json(data);
@@ -375,6 +376,7 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
           data.equipmentId,
           data.details,
           data.detailsAI,
+          "", // completionDate (Column H)
           data.responsible,
           data.status,
           data.signedDate,
@@ -384,7 +386,7 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
         // 3. Append to Sheets
         await sheets.spreadsheets.values.append({
           spreadsheetId,
-          range: `${sheetName}!A:K`,
+          range: `${sheetName}!A:L`,
           valueInputOption: "USER_ENTERED",
           requestBody: { values },
         });
@@ -415,6 +417,7 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
         data.equipmentId,
         data.details,
         data.detailsAI,
+        "", // completionDate (Column H)
         data.responsible,
         data.status,
         data.signedDate,
@@ -423,7 +426,7 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
       await sheets.spreadsheets.values.append({
         spreadsheetId,
-        range: `${sheetName}!A:K`,
+        range: `${sheetName}!A:L`,
         valueInputOption: "USER_ENTERED",
         requestBody: { values },
       });

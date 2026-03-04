@@ -62,6 +62,7 @@ interface RepairData {
   responsible: string;
   status: 'อยู่ระหว่างดำเนินการ' | 'แก้ไขเสร็จแล้ว';
   signedDate: string;
+  completionDate?: string;
 }
 
 const INITIAL_DATA: RepairData = {
@@ -73,6 +74,7 @@ const INITIAL_DATA: RepairData = {
   responsible: '',
   status: 'อยู่ระหว่างดำเนินการ',
   signedDate: '',
+  completionDate: '',
 };
 
 // --- Components ---
@@ -91,6 +93,7 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const [data, setData] = useState<RepairItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [error, setError] = useState<string | null>(null);
   
   // Default to current Thai year (BE)
   const currentYearBE = new Date().getFullYear() + 543;
@@ -98,19 +101,26 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
   
   const [filterMonth, setFilterMonth] = useState<number>(currentMonth);
   const [filterYear, setFilterYear] = useState<number>(currentYearBE);
-  const [filterType, setFilterType] = useState<'month' | 'year'>('month');
+  const [filterType, setFilterType] = useState<'month' | 'year' | 'all'>('all');
 
   useEffect(() => {
     fetchData();
   }, []);
 
   const fetchData = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const res = await fetch('/api/repair/list');
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to fetch data');
+      }
       const json = await res.json();
       setData(json);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch data', error);
+      setError(error.message);
     } finally {
       setLoading(false);
     }
@@ -118,13 +128,32 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
 
   const filteredData = data.filter(item => {
     try {
-      const [d, m, y] = item.signedDate.split('/');
-      const itemYear = parseInt(y);
-      const itemMonth = parseInt(m);
+      // Robust date parsing: handle DD/MM/YYYY, YYYY-MM-DD, etc.
+      let itemDay, itemMonth, itemYear;
+      
+      if (item.signedDate.includes('/')) {
+        const parts = item.signedDate.split('/');
+        itemDay = parseInt(parts[0]);
+        itemMonth = parseInt(parts[1]);
+        itemYear = parseInt(parts[2]);
+      } else if (item.signedDate.includes('-')) {
+        const parts = item.signedDate.split('-');
+        if (parts[0].length === 4) { // YYYY-MM-DD
+          itemYear = parseInt(parts[0]);
+          itemMonth = parseInt(parts[1]);
+          itemDay = parseInt(parts[2]);
+        } else { // DD-MM-YYYY
+          itemDay = parseInt(parts[0]);
+          itemMonth = parseInt(parts[1]);
+          itemYear = parseInt(parts[2]);
+        }
+      }
 
-      const matchesDate = filterType === 'year' 
-        ? itemYear === filterYear 
-        : (itemYear === filterYear && itemMonth === filterMonth);
+      const matchesDate = filterType === 'all' 
+        ? true 
+        : filterType === 'year' 
+          ? itemYear === filterYear 
+          : (itemYear === filterYear && itemMonth === filterMonth);
 
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch = !searchQuery || 
@@ -143,8 +172,8 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
 
   const stats = {
     total: filteredData.length,
-    inProgress: filteredData.filter(i => i.status === 'อยู่ระหว่างดำเนินการ').length,
-    completed: filteredData.filter(i => i.status === 'แก้ไขเสร็จแล้ว').length,
+    inProgress: filteredData.filter(i => !i.completionDate || i.completionDate.trim() === '').length,
+    completed: filteredData.filter(i => i.completionDate && i.completionDate.trim() !== '').length,
   };
 
   const chartData = [
@@ -170,7 +199,30 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-4">
         <Loader2 className="w-10 h-10 text-purple-900 animate-spin" />
-        <p className="text-purple-400 font-medium">กำลังโหลดข้อมูล Dashboard...</p>
+        <p className="text-purple-400 font-medium text-center">
+          กำลังโหลดข้อมูล Dashboard...<br/>
+          <span className="text-[10px] font-normal">AI กำลังดึงข้อมูลจาก Google Sheets</span>
+        </p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 space-y-6">
+        <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center">
+          <AlertCircle className="w-8 h-8 text-red-500" />
+        </div>
+        <div className="text-center space-y-2">
+          <h3 className="text-lg font-bold text-red-900">เกิดข้อผิดพลาดในการโหลดข้อมูล</h3>
+          <p className="text-sm text-red-600 max-w-md mx-auto">{error}</p>
+        </div>
+        <button 
+          onClick={fetchData}
+          className="px-6 py-2 bg-purple-900 text-white rounded-xl font-bold text-sm shadow-lg hover:bg-purple-800 transition-all"
+        >
+          ลองใหม่อีกครั้ง
+        </button>
       </div>
     );
   }
@@ -210,6 +262,7 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
             onChange={(e) => setFilterType(e.target.value as any)}
             className="bg-purple-50 border-none rounded-xl px-3 py-2 text-xs font-bold uppercase tracking-wider text-purple-900 focus:ring-0"
           >
+            <option value="all">ทั้งหมด</option>
             <option value="month">รายเดือน</option>
             <option value="year">รายปี</option>
           </select>
@@ -226,151 +279,199 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
             </select>
           )}
 
-          <select 
-            value={filterYear}
-            onChange={(e) => setFilterYear(parseInt(e.target.value))}
-            className="bg-purple-50 border-none rounded-xl px-3 py-2 text-xs font-bold text-purple-900 focus:ring-0"
-          >
-            {[2567, 2568, 2569, 2570, 2571].map(y => (
-              <option key={y} value={y}>พ.ศ. {y}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
-          <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center">
-            <FileText className="w-6 h-6 text-purple-900" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-purple-400">งานทั้งหมด</p>
-            <p className="text-2xl font-bold text-purple-900">{stats.total}</p>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
-          <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
-            <Loader2 className="w-6 h-6 text-amber-600" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">กำลังดำเนินการ</p>
-            <p className="text-2xl font-bold text-amber-600">{stats.inProgress}</p>
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
-          <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center">
-            <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">เสร็จสิ้นแล้ว</p>
-            <p className="text-2xl font-bold text-emerald-600">{stats.completed}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-white p-8 rounded-[32px] shadow-sm border border-purple-50 space-y-6">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">สัดส่วนสถานะงาน</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={chartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-                <Legend verticalAlign="bottom" height={36}/>
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="bg-white p-8 rounded-[32px] shadow-sm border border-purple-50 space-y-6">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">10 อันดับสถานีที่แจ้งซ่อมสูงสุด</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={substationData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" width={100} fontSize={10} />
-                <Tooltip />
-                <Bar dataKey="value" fill="#4F46E5" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="bg-white rounded-[32px] shadow-sm border border-purple-50 overflow-hidden">
-        <div className="p-8 border-b border-purple-50 flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">รายการงานซ่อมบำรุง (Google Sheet View)</h3>
-          <span className="text-xs font-medium text-purple-400">แสดง {filteredData.length} รายการ</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse table-fixed min-w-[1200px]">
-            <thead>
-              <tr className="bg-purple-50/50">
-                <th className="w-20 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">เลขรัน</th>
-                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">สถานีไฟฟ้า</th>
-                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">เลขที่เอกสาร</th>
-                <th className="w-40 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">อุปกรณ์</th>
-                <th className="w-60 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">รายละเอียดความชำรุด</th>
-                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">ผู้รับผิดชอบ</th>
-                <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">สถานะ</th>
-                <th className="w-28 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">วันที่เซ็น</th>
-                <th className="w-16 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-purple-50">
-              {filteredData.map((item, idx) => (
-                <tr key={idx} className="hover:bg-purple-50/30 transition-colors">
-                  <td className="px-4 py-4 text-xs font-mono text-purple-900">{item.runNumber}</td>
-                  <td className="px-4 py-4 text-xs font-bold text-purple-900">{item.substation}</td>
-                  <td className="px-4 py-4 text-xs text-purple-500">{item.docNumber}</td>
-                  <td className="px-4 py-4 text-xs text-purple-500 truncate" title={item.equipmentId}>{item.equipmentId}</td>
-                  <td className="px-4 py-4 text-xs text-purple-500 line-clamp-2 h-12 flex items-center" title={item.details}>{item.details}</td>
-                  <td className="px-4 py-4 text-xs text-purple-500">{item.responsible}</td>
-                  <td className="px-4 py-4">
-                    <span className={cn(
-                      "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter",
-                      item.status === 'แก้ไขเสร็จแล้ว' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
-                    )}>
-                      {item.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-4 text-xs text-purple-500">{item.signedDate}</td>
-                  <td className="px-4 py-4 text-right">
-                    {item.fileUrl && (
-                      <a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-purple-400 hover:text-purple-900 transition-colors">
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
-                    )}
-                  </td>
-                </tr>
+          {filterType !== 'all' && (
+            <select 
+              value={filterYear}
+              onChange={(e) => setFilterYear(parseInt(e.target.value))}
+              className="bg-purple-50 border-none rounded-xl px-3 py-2 text-xs font-bold text-purple-900 focus:ring-0"
+            >
+              {[2567, 2568, 2569, 2570, 2571].map(y => (
+                <option key={y} value={y}>พ.ศ. {y}</option>
               ))}
-              {filteredData.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-purple-300 text-sm italic">
-                    ไม่พบข้อมูลสำหรับเงื่อนไขที่เลือก
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+            </select>
+          )}
+
+          <button 
+            onClick={fetchData}
+            className="p-2 hover:bg-purple-100 rounded-xl transition-colors text-purple-900"
+            title="รีเฟรชข้อมูล"
+          >
+            <Loader2 className={cn("w-4 h-4", loading && "animate-spin")} />
+          </button>
         </div>
       </div>
+
+      {data.length === 0 ? (
+        <div className="bg-white rounded-[32px] p-20 text-center border border-purple-100 shadow-sm space-y-4">
+          <div className="w-20 h-20 bg-purple-50 rounded-full flex items-center justify-center mx-auto">
+            <FileText className="w-10 h-10 text-purple-200" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold text-purple-900">ไม่พบข้อมูลในระบบ</h3>
+            <p className="text-purple-400 text-sm max-w-xs mx-auto">
+              ยังไม่มีการบันทึกข้อมูลงานซ่อมบำรุงลงใน Google Sheets กรุณาเพิ่มข้อมูลใหม่ที่หน้า "แจ้งซ่อมใหม่"
+            </p>
+          </div>
+          <button 
+            onClick={onBack}
+            className="px-8 py-3 bg-purple-900 text-white rounded-2xl font-bold text-sm shadow-lg hover:bg-purple-800 transition-all"
+          >
+            ไปที่หน้าแจ้งซ่อมใหม่
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
+              <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center">
+                <FileText className="w-6 h-6 text-purple-900" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-purple-400">งานทั้งหมด</p>
+                <p className="text-2xl font-bold text-purple-900">{stats.total}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center">
+                <Loader2 className="w-6 h-6 text-amber-600" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">กำลังดำเนินการ</p>
+                <p className="text-2xl font-bold text-amber-600">{stats.inProgress}</p>
+              </div>
+            </div>
+            <div className="bg-white p-6 rounded-[32px] shadow-sm border border-purple-50 flex items-center gap-4">
+              <div className="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center">
+                <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">เสร็จสิ้นแล้ว</p>
+                <p className="text-2xl font-bold text-emerald-600">{stats.completed}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-white p-8 rounded-[32px] shadow-sm border border-purple-50 space-y-6">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">สัดส่วนสถานะงาน</h3>
+              <div className="h-[300px] w-full">
+                {stats.total > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={chartData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={100}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend verticalAlign="bottom" height={36}/>
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-purple-300 text-xs italic">
+                    ไม่มีข้อมูลสำหรับแสดงกราฟ
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white p-8 rounded-[32px] shadow-sm border border-purple-50 space-y-6">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">10 อันดับสถานีที่แจ้งซ่อมสูงสุด</h3>
+              <div className="h-[300px] w-full">
+                {substationData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={substationData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" hide />
+                      <YAxis dataKey="name" type="category" width={100} fontSize={10} />
+                      <Tooltip />
+                      <Bar dataKey="value" fill="#4F46E5" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-purple-300 text-xs italic">
+                    ไม่มีข้อมูลสำหรับแสดงกราฟ
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Table */}
+          <div className="bg-white rounded-[32px] shadow-sm border border-purple-50 overflow-hidden">
+            <div className="p-8 border-b border-purple-50 flex items-center justify-between">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-purple-400">รายการงานซ่อมบำรุง (Google Sheet View)</h3>
+              <div className="flex items-center gap-4">
+                <span className="text-xs font-medium text-purple-400">แสดง {filteredData.length} จาก {data.length} รายการ</span>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse table-fixed min-w-[1200px]">
+                <thead>
+                  <tr className="bg-purple-50/50">
+                    <th className="w-20 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">เลขรัน</th>
+                    <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">สถานีไฟฟ้า</th>
+                    <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">เลขที่เอกสาร</th>
+                    <th className="w-40 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">อุปกรณ์</th>
+                    <th className="w-60 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">รายละเอียดความชำรุด</th>
+                    <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">ผู้รับผิดชอบ</th>
+                    <th className="w-32 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">สถานะ</th>
+                    <th className="w-28 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">วันที่เซ็น</th>
+                    <th className="w-28 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400">วันที่แล้วเสร็จ</th>
+                    <th className="w-16 px-4 py-4 text-[10px] font-bold uppercase tracking-wider text-purple-400"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-purple-50">
+                  {filteredData.map((item, idx) => (
+                    <tr key={idx} className="hover:bg-purple-50/30 transition-colors">
+                      <td className="px-4 py-4 text-xs font-mono text-purple-900">{item.runNumber}</td>
+                      <td className="px-4 py-4 text-xs font-bold text-purple-900">{item.substation}</td>
+                      <td className="px-4 py-4 text-xs text-purple-500">{item.docNumber}</td>
+                      <td className="px-4 py-4 text-xs text-purple-500 truncate" title={item.equipmentId}>{item.equipmentId}</td>
+                      <td className="px-4 py-4 text-xs text-purple-500 line-clamp-2 h-12 flex items-center" title={item.details}>{item.details}</td>
+                      <td className="px-4 py-4 text-xs text-purple-500">{item.responsible}</td>
+                      <td className="px-4 py-4">
+                        <span className={cn(
+                          "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase tracking-tighter",
+                          (item.completionDate && item.completionDate.trim() !== '') ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                        )}>
+                          {(item.completionDate && item.completionDate.trim() !== '') ? 'แก้ไขเสร็จแล้ว' : 'อยู่ระหว่างดำเนินการ'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-4 text-xs text-purple-500">{item.signedDate}</td>
+                      <td className="px-4 py-4 text-xs font-bold text-emerald-600">{item.completionDate || '-'}</td>
+                      <td className="px-4 py-4 text-right">
+                        {item.fileUrl && (
+                          <a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-purple-400 hover:text-purple-900 transition-colors">
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredData.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="px-6 py-12 text-center text-purple-300 text-sm italic">
+                        ไม่พบข้อมูลสำหรับเงื่อนไขที่เลือก (ลองเปลี่ยนตัวกรองเป็น "ทั้งหมด")
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };
