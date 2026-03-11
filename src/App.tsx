@@ -17,7 +17,8 @@ import {
   Calendar,
   Filter,
   Search,
-  ArrowLeft
+  ArrowLeft,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -102,6 +103,9 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const [filterType, setFilterType] = useState<'month' | 'year' | 'all'>('all');
   const [filterMonth, setFilterMonth] = useState<number>(currentMonth);
   const [filterYear, setFilterYear] = useState<number>(currentYearBE);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [isSendingReport, setIsSendingReport] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -126,39 +130,86 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
     }
   };
 
-  const filteredData = data.filter(item => {
+  const handleSendReport = async () => {
+    setShowConfirm(false);
+    setIsSendingReport(true);
     try {
-      // Robust date parsing: handle DD/MM/YYYY, YYYY-MM-DD, etc.
-      let itemDay, itemMonth, itemYear;
-      
-      const cleanDate = toArabicNumerals(item.signedDate || "").trim();
-      if (!cleanDate) return filterType === 'all';
+      // Simulate sending report
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      setSuccessMessage('ส่งรายงานประจำเดือนเรียบร้อยแล้ว');
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error) {
+      setError('ไม่สามารถส่งรายงานได้ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsSendingReport(false);
+    }
+  };
 
-      if (cleanDate.includes('/')) {
-        const parts = cleanDate.split('/');
-        itemDay = parseInt(parts[0]);
-        itemMonth = parseInt(parts[1]);
-        itemYear = parseInt(parts[2]);
-      } else if (cleanDate.includes('-')) {
-        const parts = cleanDate.split('-');
-        if (parts[0].length === 4) { // YYYY-MM-DD
-          itemYear = parseInt(parts[0]);
-          itemMonth = parseInt(parts[1]);
-          itemDay = parseInt(parts[2]);
-        } else { // DD-MM-YYYY
-          itemDay = parseInt(parts[0]);
-          itemMonth = parseInt(parts[1]);
-          itemYear = parseInt(parts[2]);
+  const monthsShort = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+  const monthsFull = [
+    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
+  ];
+
+  const normalizeYear = (y: number) => {
+    if (isNaN(y)) return NaN;
+    if (y < 100) {
+      return y > 50 ? y + 2500 : y + 2000;
+    }
+    return y;
+  };
+
+  const parseThaiDate = (dateStr: string) => {
+    if (!dateStr) return null;
+    const clean = toArabicNumerals(dateStr).trim();
+    if (!clean) return null;
+
+    // Pattern 1: DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const numericMatch = clean.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
+    if (numericMatch) {
+      return {
+        d: parseInt(numericMatch[1]),
+        m: parseInt(numericMatch[2]),
+        y: normalizeYear(parseInt(numericMatch[3]))
+      };
+    }
+
+    // Pattern 2: YYYY-MM-DD (ISO)
+    const isoMatch = clean.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (isoMatch) {
+      return {
+        d: parseInt(isoMatch[3]),
+        m: parseInt(isoMatch[2]),
+        y: parseInt(isoMatch[1])
+      };
+    }
+
+    // Pattern 3: Thai month names (e.g. "1 มกราคม 2569" or "1 ม.ค. 69")
+    for (let i = 0; i < 12; i++) {
+      const full = monthsFull[i];
+      const short = monthsShort[i];
+      if (clean.includes(full) || clean.includes(short)) {
+        const monthName = clean.includes(full) ? full : short;
+        const parts = clean.split(monthName);
+        if (parts.length >= 2) {
+          const d = parseInt(parts[0].replace(/\D/g, ''));
+          const y = normalizeYear(parseInt(parts[1].replace(/\D/g, '')));
+          if (!isNaN(d) && !isNaN(y)) {
+            return { d, m: i + 1, y };
+          }
         }
       }
+    }
 
-      if (isNaN(itemYear) || isNaN(itemMonth)) return filterType === 'all';
+    return null;
+  };
 
-      // Handle 2-digit years (e.g., "69" -> 2569 or "26" -> 2026)
-      if (itemYear < 100) {
-        if (itemYear > 50) itemYear += 2500; // Assume B.E.
-        else itemYear += 2000; // Assume C.E.
-      }
+  const filteredData = data.filter(item => {
+    try {
+      const parsed = parseThaiDate(item.signedDate || "");
+      if (!parsed) return filterType === 'all';
+
+      let { m: itemMonth, y: itemYear } = parsed;
 
       // Normalize Year: If it's B.E. (e.g. 2569), convert to C.E. (2026) for comparison
       let normalizedItemYear = itemYear;
@@ -173,9 +224,6 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
           ? (normalizedItemYear === normalizedFilterYear)
           : (normalizedItemYear === normalizedFilterYear && itemMonth === filterMonth);
 
-      // If date parsing failed but filter is 'all', still show it
-      const finalMatchesDate = (filterType === 'all') ? true : matchesDate;
-
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch = !searchQuery || 
         item.substation.toLowerCase().includes(searchLower) ||
@@ -186,7 +234,7 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
         item.runNumber.toLowerCase().includes(searchLower) ||
         item.detailsAI.toLowerCase().includes(searchLower);
 
-      return finalMatchesDate && matchesSearch;
+      return matchesDate && matchesSearch;
     } catch (e) {
       return false;
     }
@@ -222,10 +270,7 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
    .sort((a, b) => b.value - a.value)
    .slice(0, 10);
 
-  const months = [
-    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
-    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม'
-  ];
+  const months = monthsFull;
 
   if (loading) {
     return (
@@ -322,6 +367,19 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
               ))}
             </select>
           )}
+
+          <button 
+            onClick={() => setShowConfirm(true)}
+            disabled={isSendingReport || loading}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-xs font-bold transition-all"
+          >
+            {isSendingReport ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
+            ส่งรายงานประจำเดือน
+          </button>
 
           <button 
             onClick={fetchData}
@@ -504,6 +562,57 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
           </div>
         </>
       )}
+
+      {/* Success Message Toast */}
+      <AnimatePresence>
+        {successMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] px-6 py-3 bg-emerald-600 text-white rounded-2xl shadow-2xl flex items-center gap-3 font-bold text-sm"
+          >
+            <CheckCircle2 className="w-5 h-5" />
+            {successMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {showConfirm && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-purple-900/20 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-[32px] p-8 shadow-2xl border border-purple-100 max-w-sm w-full space-y-6"
+            >
+              <div className="w-16 h-16 bg-purple-50 rounded-full flex items-center justify-center mx-auto">
+                <Send className="w-8 h-8 text-purple-900" />
+              </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-xl font-bold text-purple-900">ยืนยันการส่งรายงาน</h3>
+                <p className="text-purple-400 text-sm">คุณยืนยันที่จะส่งรายงานประจำเดือนนี้ใช่หรือไม่?</p>
+              </div>
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setShowConfirm(false)}
+                  className="flex-1 py-3 rounded-2xl font-bold text-sm text-purple-400 hover:bg-purple-50 transition-all"
+                >
+                  ไม่ใช่
+                </button>
+                <button 
+                  onClick={handleSendReport}
+                  className="flex-1 py-3 bg-purple-900 text-white rounded-2xl font-bold text-sm shadow-lg hover:bg-purple-800 transition-all"
+                >
+                  ใช่
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
