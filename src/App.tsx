@@ -18,7 +18,8 @@ import {
   Filter,
   Search,
   ArrowLeft,
-  Send
+  Send,
+  MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -89,6 +90,15 @@ interface RepairItem extends RepairData {
 type View = 'form' | 'dashboard';
 
 // --- Components ---
+
+const SUBSTATION_LOCATIONS: Record<string, string> = {
+  'กระทุ่มแบน 6': 'https://www.google.com/maps?q=13.644913,100.324911',
+  'สถานีไฟฟ้ากระทุ่มแบน 6': 'https://www.google.com/maps?q=13.644913,100.324911',
+  'สมุทรสาคร 3': 'https://www.google.com/maps?q=13.59696,100.332905',
+  'สถานีไฟฟ้าสมุทรสาคร 3': 'https://www.google.com/maps?q=13.59696,100.332905',
+  'สมุทรสาคร 10': 'https://www.google.com/maps?q=13.625357,100.278072',
+  'สถานีไฟฟ้าสมุทรสาคร 10': 'https://www.google.com/maps?q=13.625357,100.278072',
+};
 
 const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const [data, setData] = useState<RepairItem[]>([]);
@@ -525,7 +535,21 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
                   {filteredData.map((item, idx) => (
                     <tr key={idx} className="hover:bg-purple-50/30 transition-colors">
                       <td className="px-4 py-4 text-xs font-mono text-purple-900">{item.runNumber}</td>
-                      <td className="px-4 py-4 text-xs font-bold text-purple-900">{item.substation}</td>
+                      <td className="px-4 py-4 text-xs font-bold text-purple-900">
+                        {SUBSTATION_LOCATIONS[item.substation] ? (
+                          <a 
+                            href={SUBSTATION_LOCATIONS[item.substation]} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-purple-900 hover:text-purple-600 transition-colors group"
+                          >
+                            {item.substation}
+                            <MapPin className="w-3 h-3 text-purple-300 group-hover:text-purple-600" />
+                          </a>
+                        ) : (
+                          item.substation
+                        )}
+                      </td>
                       <td className="px-4 py-4 text-xs text-purple-500">{item.docNumber}</td>
                       <td className="px-4 py-4 text-xs text-purple-500 truncate" title={item.equipmentId}>{item.equipmentId}</td>
                       <td className="px-4 py-4 text-xs text-purple-500 line-clamp-2 h-12 flex items-center" title={item.details}>{item.details}</td>
