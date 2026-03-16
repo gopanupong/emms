@@ -643,6 +643,7 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
 
 export default function App() {
   const [view, setView] = useState<View>('form');
+  const [nextRunNumber, setNextRunNumber] = useState<string>('XXX');
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [repairData, setRepairData] = useState<RepairData>(INITIAL_DATA);
@@ -650,6 +651,24 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (view === 'form') {
+      fetchNextRunNumber();
+    }
+  }, [view]);
+
+  const fetchNextRunNumber = async () => {
+    try {
+      const res = await fetch('/api/repair/next-run-number');
+      if (res.ok) {
+        const data = await res.json();
+        setNextRunNumber(data.nextRunNumber);
+      }
+    } catch (error) {
+      console.error('Failed to fetch next run number', error);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -728,6 +747,7 @@ export default function App() {
             setSelectedFile(null);
             setPreviewUrl(null);
             setMessage(null);
+            fetchNextRunNumber();
           }, 3000);
         }
       } else {
@@ -958,7 +978,7 @@ export default function App() {
                     <div className="w-full bg-purple-50/30 border border-purple-100 rounded-xl px-4 py-3 text-xs font-mono text-purple-900 break-all flex items-center gap-2">
                       <FileText className="w-4 h-4 text-purple-400 shrink-0" />
                       <span>
-                        {`XXX_${repairData.substation.replace(/^สถานีไฟฟ้า/, "").trim() || 'สถานี'}_${repairData.docNumber.replace(/\//g, "-") || 'เลขที่เอกสาร'} แจ้งอุปกรณ์ชำรุด.pdf`}
+                        {`${nextRunNumber}_${repairData.substation.replace(/^สถานีไฟฟ้า/, "").replace(/\s+/g, "") || 'สถานี'}_${repairData.docNumber.replace(/\//g, "-").replace(/\s+/g, "") || 'เลขที่เอกสาร'}แจ้งอุปกรณ์ชำรุด.pdf`}
                       </span>
                     </div>
                   </div>

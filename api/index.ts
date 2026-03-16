@@ -225,6 +225,28 @@ router.get(["/api/auth/status", "/auth/status"], (req, res) => {
   res.json({ isAuthenticated: !!GOOGLE_REFRESH_TOKEN });
 });
 
+router.get("/api/repair/next-run-number", async (req, res) => {
+  try {
+    const spreadsheetId = process.env.GOOGLE_SHEET_ID;
+    if (!spreadsheetId) throw new Error("GOOGLE_SHEET_ID is not configured.");
+    const auth = await getAuthenticatedClient();
+    const sheets = google.sheets({ version: "v4", auth });
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId });
+    const sheetName = spreadsheet.data.sheets?.[0]?.properties?.title || "Sheet1";
+    
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!B:B`,
+    });
+    
+    const values = response.data.values || [];
+    const nextRunNumber = String(values.length).padStart(3, '0');
+    res.json({ nextRunNumber });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get("/api/repair/list", async (req, res) => {
   console.log("Repair list requested");
   try {
@@ -343,10 +365,10 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
           folderId = newFolder.data.id!;
         }
 
-        const cleanSubstation = substationName.replace(/[\\\/:*?"<>|]/g, "");
-        const cleanDocNumber = (data.docNumber || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\//g, "-");
+        const cleanSubstation = substationName.replace(/[\\\/:*?"<>|]/g, "").replace(/\s+/g, "");
+        const cleanDocNumber = (data.docNumber || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\//g, "-").replace(/\s+/g, "");
         
-        const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber} แจ้งอุปกรณ์ชำรุด.pdf`;
+        const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}แจ้งอุปกรณ์ชำรุด.pdf`;
 
         // 1. Upload with temporary name first (or original name)
         const fileMetadata = {
