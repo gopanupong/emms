@@ -953,6 +953,16 @@ export default function App() {
                     </div>
                   </div>
 
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-bold uppercase tracking-wider text-purple-400">ชื่อไฟล์ที่จะบันทึก (ตัวอย่าง)</label>
+                    <div className="w-full bg-purple-50/30 border border-purple-100 rounded-xl px-4 py-3 text-xs font-mono text-purple-900 break-all flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-purple-400 shrink-0" />
+                      <span>
+                        {`XXX_${repairData.substation.replace(/^สถานีไฟฟ้า/, "").trim() || 'สถานี'}_${repairData.docNumber.replace(/\//g, "-") || 'เลขที่เอกสาร'} แจ้งอุปกรณ์ชำรุด.pdf`}
+                      </span>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <label className="text-[11px] font-bold uppercase tracking-wider text-purple-400">วันที่ผู้บริหารเซ็น</label>
