@@ -367,8 +367,9 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
 
         const cleanSubstation = substationName.replace(/[\\\/:*?"<>|]/g, "").replace(/\s+/g, "");
         const cleanDocNumber = (data.docNumber || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\//g, "-").replace(/\s+/g, "");
+        const cleanEquipmentId = (data.equipmentId || "").replace(/[\\\/:*?"<>|]/g, "").replace(/\s+/g, "");
         
-        const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}แจ้งอุปกรณ์ชำรุด.pdf`;
+        const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}แจ้งอุปกรณ์ชำรุด${cleanEquipmentId}.pdf`;
 
         // 1. Upload with temporary name first (or original name)
         const fileMetadata = {

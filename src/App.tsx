@@ -978,7 +978,7 @@ export default function App() {
                     <div className="w-full bg-purple-50/30 border border-purple-100 rounded-xl px-4 py-3 text-xs font-mono text-purple-900 break-all flex items-center gap-2">
                       <FileText className="w-4 h-4 text-purple-400 shrink-0" />
                       <span>
-                        {`${nextRunNumber}_${repairData.substation.replace(/^สถานีไฟฟ้า/, "").replace(/\s+/g, "") || 'สถานี'}_${repairData.docNumber.replace(/\//g, "-").replace(/\s+/g, "") || 'เลขที่เอกสาร'}แจ้งอุปกรณ์ชำรุด.pdf`}
+                        {`${nextRunNumber}_${repairData.substation.replace(/^สถานีไฟฟ้า/, "").replace(/\s+/g, "") || 'สถานี'}_${repairData.docNumber.replace(/\//g, "-").replace(/\s+/g, "") || 'เลขที่เอกสาร'}แจ้งอุปกรณ์ชำรุด${repairData.equipmentId.replace(/\s+/g, "") || 'รหัสอุปกรณ์'}.pdf`}
                       </span>
                     </div>
                   </div>
