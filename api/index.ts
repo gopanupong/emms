@@ -5,6 +5,7 @@ import fs from "fs";
 import os from "os";
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { getStoredRefreshToken, setStoredRefreshToken } from "./token-store";
 
 const router = express.Router();
 
@@ -27,9 +28,19 @@ const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
 async function getAuthenticatedClient() {
-  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN) {
+  const currentRefreshToken = getStoredRefreshToken() || GOOGLE_REFRESH_TOKEN;
+  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && currentRefreshToken) {
     const oauth2Client = getOAuth2Client();
-    oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
+    oauth2Client.setCredentials({ refresh_token: currentRefreshToken });
+
+    // Automatically persist rotated tokens
+    oauth2Client.on("tokens", (tokens) => {
+      if (tokens.refresh_token) {
+        console.log("Auto-saving rotated refresh token...");
+        setStoredRefreshToken(tokens.refresh_token);
+      }
+    });
+
     return oauth2Client;
   }
 
@@ -64,112 +75,123 @@ function toArabicNumerals(str: string): string {
 // AI Extraction Route
 router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
   console.log("AI Extraction requested");
+  const file = (req as any).file;
   try {
     if (!GEMINI_API_KEY) {
       throw new Error("GEMINI_API_KEY is not configured on the server.");
     }
 
-    const file = (req as any).file;
     if (!file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
+    let mimeType = file.mimetype;
+    if (!mimeType || mimeType === "application/octet-stream") {
+      const ext = file.originalname?.split(".").pop()?.toLowerCase();
+      if (ext === "pdf") mimeType = "application/pdf";
+      else if (ext === "png") mimeType = "image/png";
+      else if (ext === "jpg" || ext === "jpeg") mimeType = "image/jpeg";
+      else if (ext === "webp") mimeType = "image/webp";
+    }
+
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-    
     const fileBuffer = fs.readFileSync(file.path);
     const base64Data = fileBuffer.toString("base64");
 
-    // Retry logic for 503 errors (High Demand)
-    let attempt = 0;
-    const maxAttempts = 3; // Increase to 3 attempts
+    // Candidate models in order of availability and speed
+    const CANDIDATE_MODELS = [
+      "gemini-3.1-flash-lite", // Fast, dedicated queue, lowest 503 chance
+      "gemini-3.6-flash",      // Next-gen high intelligence
+      "gemini-flash-latest"    // Standard flash alias
+    ];
+
+    let extractedData: any = null;
     let lastError: any = null;
+    const maxRounds = 2;
 
-    while (attempt <= maxAttempts) {
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-flash-latest", // Use latest flash for better availability
-          contents: [
-            {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: file.mimetype,
-                    data: base64Data,
+    for (let round = 1; round <= maxRounds; round++) {
+      for (const modelName of CANDIDATE_MODELS) {
+        try {
+          console.log(`Extracting with model: ${modelName} (round ${round})...`);
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: mimeType,
+                      data: base64Data,
+                    },
                   },
-                },
-                {
-                  text: `Extract repair information from this document in Thai. 
-                  IMPORTANT: Convert all Thai numerals (๐-๙) to Arabic numerals (0-9) in all extracted fields.
-                  Return a JSON object with these fields:
-                  - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
-                  - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
-                  - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
-                  - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ แต่ให้แปลงเลขไทยเป็นเลขอารบิก)
-                  - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน และใช้เลขอารบิกเท่านั้น)
-                  - responsible: หน่วยงานที่รับผิดชอบ
-                  - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป ในรูปแบบเลขอารบิก)
-                  
-                  If a field is not found, leave it as an empty string.`,
-                },
-              ],
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                substation: { type: Type.STRING },
-                docNumber: { type: Type.STRING },
-                equipmentId: { type: Type.STRING },
-                details: { type: Type.STRING },
-                detailsAI: { type: Type.STRING },
-                responsible: { type: Type.STRING },
-                signedDate: { type: Type.STRING },
+                  {
+                    text: `Extract repair information from this document in Thai. 
+IMPORTANT: Convert all Thai numerals (๐-๙) to Arabic numerals (0-9) in all extracted fields.
+Return a JSON object with these fields:
+- substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
+- docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
+- equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
+- details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ แต่ให้แปลงเลขไทยเป็นเลขอารบิก)
+- detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน และใช้เลขอารบิกเท่านั้น)
+- responsible: หน่วยงานที่รับผิดชอบ
+- signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป ในรูปแบบเลขอารบิก)
+
+If a field is not found, leave it as an empty string.`,
+                  },
+                ],
               },
-              required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  substation: { type: Type.STRING },
+                  docNumber: { type: Type.STRING },
+                  equipmentId: { type: Type.STRING },
+                  details: { type: Type.STRING },
+                  detailsAI: { type: Type.STRING },
+                  responsible: { type: Type.STRING },
+                  signedDate: { type: Type.STRING },
+                },
+                required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
+              },
             },
-          },
-        });
+          });
 
-        // Cleanup temp file
-        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+          let rawText = response.text || "{}";
+          rawText = rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+          const parsed = JSON.parse(rawText);
 
-        const extracted = JSON.parse(response.text || '{}');
-        
-        // Final pass to ensure all Thai numerals are converted
-        Object.keys(extracted).forEach(key => {
-          if (typeof extracted[key] === 'string') {
-            extracted[key] = toArabicNumerals(extracted[key]);
-          }
-        });
+          Object.keys(parsed).forEach((key) => {
+            if (typeof parsed[key] === "string") {
+              parsed[key] = toArabicNumerals(parsed[key]);
+            }
+          });
 
-        return res.json(extracted);
-      } catch (error: any) {
-        lastError = error;
-        // If it's a 503 error or 429 (Rate Limit), wait and retry
-        const isRetryable = error.message?.includes("503") || error.status === 503 || error.status === 429;
-        
-        if (isRetryable) {
-          attempt++;
-          if (attempt <= maxAttempts) {
-            const delay = 3000 * attempt; // 3s, 6s, 9s
-            console.log(`AI busy or rate limited, retrying in ${delay}ms (attempt ${attempt})...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-            continue;
-          }
+          extractedData = parsed;
+          console.log(`AI Extraction succeeded using ${modelName}`);
+          break;
+        } catch (err: any) {
+          lastError = err;
+          console.warn(`Model ${modelName} failed (${err.status || err.message}). Failing over to next model...`);
         }
-        break;
+      }
+
+      if (extractedData) break;
+      if (round < maxRounds) {
+        console.log("Waiting 2s before round 2...");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
 
-    // If we reach here, it means all attempts failed
-    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
-    
-    // Custom friendly error message for 503
+    if (extractedData) {
+      return res.json(extractedData);
+    }
+
     if (lastError?.status === 503 || lastError?.message?.includes("503")) {
       return res.status(503).json({ 
-        error: "ขณะนี้ระบบ AI ของ Google มีผู้ใช้งานจำนวนมาก กรุณารอสัก 10-20 วินาทีแล้วลองใหม่อีกครั้งครับ" 
+        error: "ขณะนี้ระบบ AI ของ Google กำลังมีผู้ใช้งานหนาแน่น กรุณารอสักครู่แล้วกดปุ่ม 'ลองให้ AI อ่านเอกสารอีกครั้ง' ได้เลยครับ" 
       });
     }
 
@@ -182,7 +204,15 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
     throw lastError;
   } catch (error: any) {
     console.error("AI Extraction failed:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || "เกิดข้อผิดพลาดในการประมวลผลเอกสาร" });
+  } finally {
+    if (file && fs.existsSync(file.path)) {
+      try {
+        fs.unlinkSync(file.path);
+      } catch (cleanupErr) {
+        console.error("Failed to clean up temp file:", cleanupErr);
+      }
+    }
   }
 });
 
@@ -206,13 +236,24 @@ router.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
   try {
     const oauth2Client = getOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code as string);
+    if (tokens.refresh_token) {
+      setStoredRefreshToken(tokens.refresh_token);
+      console.log("Successfully stored refresh token from auth callback");
+    }
     res.send(`
       <div style="font-family: sans-serif; padding: 40px; line-height: 1.6; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #4F46E5;">✅ คัดลอก Refresh Token ของคุณ</h2>
-        <p>นำค่าด้านล่างนี้ไปใส่ใน Vercel Environment Variables ชื่อ <b>GOOGLE_REFRESH_TOKEN</b></p>
-        <textarea style="width: 100%; height: 120px; padding: 15px; border: 2px solid #E5E7EB; border-radius: 12px; font-family: monospace; font-size: 14px; background: #F9FAFB;" readonly>${tokens.refresh_token}</textarea>
-        <div style="margin-top: 20px; padding: 15px; background: #FEF2F2; border-radius: 8px; border: 1px solid #FEE2E2;">
-          <p style="color: #EF4444; font-size: 14px; margin: 0;"><b>ขั้นตอนสุดท้าย:</b> เมื่อใส่ค่าใน Vercel แล้ว อย่าลืมกด <b>Redeploy</b> เพื่อให้ระบบเริ่มทำงานนะครับ</p>
+        <h2 style="color: #059669;">✅ ยืนยันตัวตนสำเร็จและบันทึก Refresh Token เรียบร้อยแล้ว!</h2>
+        <p style="color: #374151;">ระบบได้บันทึก Token ล่าสุดให้โดยอัตโนมัติแล้ว ท่านสามารถกลับไปใช้งานระบบได้ทันทีโดยไม่ต้องตั้งค่าใหม่</p>
+        
+        <div style="margin: 25px 0;">
+          <a href="/" style="display: inline-block; background: #4F46E5; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">
+            กลับสู่หน้าหลักของระบบ
+          </a>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 12px;">
+          <p style="font-size: 13px; color: #6B7280; margin-top: 0;">(สำรอง) Refresh Token สำหรับบันทึกใน Vercel Environment Variables หากต้องการ:</p>
+          <textarea style="width: 100%; height: 90px; padding: 10px; border: 1px solid #D1D5DB; border-radius: 8px; font-family: monospace; font-size: 13px; background: white;" readonly>${tokens.refresh_token || "ไม่มี refresh_token ใหม่ส่งกลับมา (ใช้ token เดิมที่บันทึกไว้)"}</textarea>
         </div>
       </div>
     `);
@@ -222,7 +263,8 @@ router.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
 });
 
 router.get(["/api/auth/status", "/auth/status"], (req, res) => {
-  res.json({ isAuthenticated: !!GOOGLE_REFRESH_TOKEN });
+  const currentRefreshToken = getStoredRefreshToken() || GOOGLE_REFRESH_TOKEN;
+  res.json({ isAuthenticated: !!currentRefreshToken });
 });
 
 router.get("/api/repair/next-run-number", async (req, res) => {

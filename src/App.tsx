@@ -19,7 +19,8 @@ import {
   Search,
   ArrowLeft,
   Send,
-  MapPin
+  MapPin,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -861,6 +862,17 @@ export default function App() {
                           <p className="font-medium truncate max-w-[200px]">{selectedFile.name}</p>
                           <p className="text-xs text-purple-400">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
                         </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            extractData(selectedFile);
+                          }}
+                          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-lg text-xs font-semibold transition-all shadow-xs"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          ให้ AI อ่านเอกสารอีกครั้ง
+                        </button>
                       </>
                     ) : (
                       <>
@@ -1046,6 +1058,18 @@ export default function App() {
                         {message.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
                         <div className="flex-1">
                           {message.text}
+                          {selectedFile && message.type === 'error' && !isExtracting && (
+                            <div className="mt-3">
+                              <button
+                                type="button"
+                                onClick={() => extractData(selectedFile)}
+                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-purple-900 text-white rounded-xl text-xs font-semibold hover:bg-purple-800 transition-all shadow-sm active:scale-95"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                ลองให้ AI อ่านเอกสารใหม่อีกครั้ง
+                              </button>
+                            </div>
+                          )}
                           {message.text.includes('invalid_grant') && (
                             <div className="mt-3">
                               <a 
