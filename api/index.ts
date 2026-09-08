@@ -1,21 +1,10 @@
 import express from "express";
 import { google } from "googleapis";
 import multer from "multer";
-import { Readable } from "stream";
+import fs from "fs";
+import os from "os";
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { getStoredRefreshToken, setStoredRefreshToken } from "./token-store";
-
-const app = express();
-
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
-
-// In-memory Multer storage - safe for Vercel Serverless Function & AWS Lambda read-only environments
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB max
-});
 
 const router = express.Router();
 
@@ -38,19 +27,9 @@ const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
 async function getAuthenticatedClient() {
-  const currentRefreshToken = getStoredRefreshToken() || GOOGLE_REFRESH_TOKEN;
-  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && currentRefreshToken) {
+  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET && GOOGLE_REFRESH_TOKEN) {
     const oauth2Client = getOAuth2Client();
-    oauth2Client.setCredentials({ refresh_token: currentRefreshToken });
-
-    // Automatically persist rotated tokens
-    oauth2Client.on("tokens", (tokens) => {
-      if (tokens.refresh_token) {
-        console.log("Auto-saving rotated refresh token...");
-        setStoredRefreshToken(tokens.refresh_token);
-      }
-    });
-
+    oauth2Client.setCredentials({ refresh_token: GOOGLE_REFRESH_TOKEN });
     return oauth2Client;
   }
 
@@ -68,9 +47,11 @@ async function getAuthenticatedClient() {
   throw new Error("Google credentials not configured. Please set GOOGLE_REFRESH_TOKEN or Service Account keys.");
 }
 
+// --- Multer Setup ---
+const upload = multer({ dest: os.tmpdir() });
+
 // --- Utilities ---
 function toArabicNumerals(str: string): string {
-  if (!str) return "";
   const thaiNumerals = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
   const arabicNumerals = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
   let result = str;
@@ -80,71 +61,55 @@ function toArabicNumerals(str: string): string {
   return result;
 }
 
-// --- AI Extraction Route ---
-router.post(["/ai/extract", "/api/ai/extract"], upload.single("file"), async (req, res) => {
+// AI Extraction Route
+router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
   console.log("AI Extraction requested");
   try {
-    const activeApiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || GEMINI_API_KEY || "").trim().replace(/^["']|["']$/g, '');
-    if (!activeApiKey) {
-      return res.status(500).json({ 
-        error: "เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Environment Variables ของ Vercel กรุณาเพิ่ม GEMINI_API_KEY ในการตั้งค่าโปรเจกต์บน Vercel แล้วกด Redeploy" 
-      });
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is not configured on the server.");
     }
 
     const file = (req as any).file;
-    if (!file || !file.buffer) {
-      return res.status(400).json({ error: "ไม่พบข้อมูลไฟล์ที่อัปโหลด หรือไฟล์ว่างเปล่า" });
+    if (!file) {
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
-    let mimeType = file.mimetype;
-    if (!mimeType || mimeType === "application/octet-stream") {
-      const ext = file.originalname?.split(".").pop()?.toLowerCase();
-      if (ext === "pdf") mimeType = "application/pdf";
-      else if (ext === "png") mimeType = "image/png";
-      else if (ext === "jpg" || ext === "jpeg") mimeType = "image/jpeg";
-      else if (ext === "webp") mimeType = "image/webp";
-    }
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    
+    const fileBuffer = fs.readFileSync(file.path);
+    const base64Data = fileBuffer.toString("base64");
 
-    const ai = new GoogleGenAI({ apiKey: activeApiKey });
-    const base64Data = file.buffer.toString("base64");
-
-    // Candidate models in order of speed and stability
-    const CANDIDATE_MODELS = [
-      "gemini-3.1-flash-lite", // Fast, dedicated queue, lowest latency
-      "gemini-3.6-flash",      // Next-gen high intelligence
-      "gemini-flash-latest"    // Standard flash alias
-    ];
-
-    let extractedData: any = null;
+    // Retry logic for 503 errors (High Demand)
+    let attempt = 0;
+    const maxAttempts = 3; // Increase to 3 attempts
     let lastError: any = null;
 
-    for (const modelName of CANDIDATE_MODELS) {
+    while (attempt <= maxAttempts) {
       try {
-        console.log(`Extracting with model: ${modelName}...`);
         const response = await ai.models.generateContent({
-          model: modelName,
+          model: "gemini-flash-latest", // Use latest flash for better availability
           contents: [
             {
               parts: [
                 {
                   inlineData: {
-                    mimeType: mimeType,
+                    mimeType: file.mimetype,
                     data: base64Data,
                   },
                 },
                 {
                   text: `Extract repair information from this document in Thai. 
-IMPORTANT: Convert all Thai numerals (๐-๙) to Arabic numerals (0-9) in all extracted fields.
-Return a JSON object with these fields:
-- substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
-- docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
-- equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
-- details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ แต่ให้แปลงเลขไทยเป็นเลขอารบิก)
-- detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน และใช้เลขอารบิกเท่านั้น)
-- responsible: หน่วยงานที่รับผิดชอบ
-- signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป ในรูปแบบเลขอารบิก)
-
-If a field is not found, leave it as an empty string.`,
+                  IMPORTANT: Convert all Thai numerals (๐-๙) to Arabic numerals (0-9) in all extracted fields.
+                  Return a JSON object with these fields:
+                  - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
+                  - docNumber: เลขที่ ก3 กปบ. (เช่น 123/2567)
+                  - equipmentId: รหัสอุปกรณ์ที่ชำรุด (หากมีหลายบรรทัดหรือหลายรายการ ให้รวมเข้าด้วยกันและคั่นด้วยเครื่องหมายจุลภาค ",")
+                  - details: รายละเอียดการชำรุด (ดึงข้อความต้นฉบับมาจาก PDF โดยตรง ไม่ต้องแก้ไขคำ แต่ให้แปลงเลขไทยเป็นเลขอารบิก)
+                  - detailsAI: รายละเอียดการชำรุด (นำข้อมูลจาก details มาเรียบเรียงใหม่เป็นภาษาราชการที่สุภาพและเป็นทางการ โดยหากมีคำศัพท์เทคนิคหรือชื่ออุปกรณ์ภาษาอังกฤษ ให้ใช้คำภาษาอังกฤษทับศัพท์ไปเลย ไม่ต้องแปลเป็นภาษาไทย เพื่อป้องกันความหมายคลาดเคลื่อน และใช้เลขอารบิกเท่านั้น)
+                  - responsible: หน่วยงานที่รับผิดชอบ
+                  - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป ในรูปแบบเลขอารบิก)
+                  
+                  If a field is not found, leave it as an empty string.`,
                 },
               ],
             },
@@ -167,50 +132,62 @@ If a field is not found, leave it as an empty string.`,
           },
         });
 
-        let rawText = response.text || "{}";
-        rawText = rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
-        const parsed = JSON.parse(rawText);
+        // Cleanup temp file
+        if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
 
-        Object.keys(parsed).forEach((key) => {
-          if (typeof parsed[key] === "string") {
-            parsed[key] = toArabicNumerals(parsed[key]);
+        const extracted = JSON.parse(response.text || '{}');
+        
+        // Final pass to ensure all Thai numerals are converted
+        Object.keys(extracted).forEach(key => {
+          if (typeof extracted[key] === 'string') {
+            extracted[key] = toArabicNumerals(extracted[key]);
           }
         });
 
-        extractedData = parsed;
-        console.log(`AI Extraction succeeded with ${modelName}`);
+        return res.json(extracted);
+      } catch (error: any) {
+        lastError = error;
+        // If it's a 503 error or 429 (Rate Limit), wait and retry
+        const isRetryable = error.message?.includes("503") || error.status === 503 || error.status === 429;
+        
+        if (isRetryable) {
+          attempt++;
+          if (attempt <= maxAttempts) {
+            const delay = 3000 * attempt; // 3s, 6s, 9s
+            console.log(`AI busy or rate limited, retrying in ${delay}ms (attempt ${attempt})...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+        }
         break;
-      } catch (err: any) {
-        lastError = err;
-        console.warn(`Model ${modelName} failed (${err.status || err.message}). Failing over to next model...`);
       }
     }
 
-    if (extractedData) {
-      return res.json(extractedData);
-    }
-
+    // If we reach here, it means all attempts failed
+    if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
+    
+    // Custom friendly error message for 503
     if (lastError?.status === 503 || lastError?.message?.includes("503")) {
       return res.status(503).json({ 
-        error: "ขณะนี้ระบบ AI ของ Google กำลังมีผู้ใช้งานหนาแน่น กรุณารอสักครู่แล้วกดปุ่ม 'ลองให้ AI อ่านเอกสารอีกครั้ง' ได้เลยครับ" 
+        error: "ขณะนี้ระบบ AI ของ Google มีผู้ใช้งานจำนวนมาก กรุณารอสัก 10-20 วินาทีแล้วลองใหม่อีกครั้งครับ" 
       });
     }
 
-    if (lastError?.status === 429 || lastError?.message?.includes("429")) {
-      return res.status(429).json({ 
-        error: "โควตาการเรียกใช้งาน AI ชั่วคราวเต็มแล้ว (Rate Limit) รบกวนรอประมาณ 1 นาทีแล้วลองใหม่อีกครั้งครับ" 
+    if (lastError?.message?.includes("invalid_grant")) {
+      return res.status(401).json({
+        error: "สิทธิ์การเข้าถึง Google หมดอายุ (invalid_grant) กรุณาทำการยืนยันตัวตนใหม่ที่ " + APP_URL + "/api/auth/init"
       });
     }
-
-    throw lastError || new Error("AI ไม่สามารถประมวลผลเอกสารได้");
+    
+    throw lastError;
   } catch (error: any) {
     console.error("AI Extraction failed:", error);
-    res.status(500).json({ error: error.message || "เกิดข้อผิดพลาดในการประมวลผลเอกสาร" });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// --- Auth Routes ---
-router.get(["/auth/init", "/api/auth/init"], (req, res) => {
+// Auth Routes
+router.get(["/api/auth/init", "/auth/init"], (req, res) => {
   console.log("Auth init requested");
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
     return res.status(400).send("Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or APP_URL in environment variables.");
@@ -224,29 +201,18 @@ router.get(["/auth/init", "/api/auth/init"], (req, res) => {
   res.redirect(url);
 });
 
-router.get(["/auth/callback", "/api/auth/callback"], async (req, res) => {
+router.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
   const { code } = req.query;
   try {
     const oauth2Client = getOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code as string);
-    if (tokens.refresh_token) {
-      setStoredRefreshToken(tokens.refresh_token);
-      console.log("Successfully stored refresh token from auth callback");
-    }
     res.send(`
       <div style="font-family: sans-serif; padding: 40px; line-height: 1.6; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #059669;">✅ ยืนยันตัวตนสำเร็จและบันทึก Refresh Token เรียบร้อยแล้ว!</h2>
-        <p style="color: #374151;">ระบบได้บันทึก Token ล่าสุดให้โดยอัตโนมัติแล้ว ท่านสามารถกลับไปใช้งานระบบได้ทันทีโดยไม่ต้องตั้งค่าใหม่</p>
-        
-        <div style="margin: 25px 0;">
-          <a href="/" style="display: inline-block; background: #4F46E5; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">
-            กลับสู่หน้าหลักของระบบ
-          </a>
-        </div>
-
-        <div style="margin-top: 30px; padding: 20px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 12px;">
-          <p style="font-size: 13px; color: #6B7280; margin-top: 0;">(สำรอง) Refresh Token สำหรับบันทึกใน Vercel Environment Variables หากต้องการ:</p>
-          <textarea style="width: 100%; height: 90px; padding: 10px; border: 1px solid #D1D5DB; border-radius: 8px; font-family: monospace; font-size: 13px; background: white;" readonly>${tokens.refresh_token || "ไม่มี refresh_token ใหม่ส่งกลับมา (ใช้ token เดิมที่บันทึกไว้)"}</textarea>
+        <h2 style="color: #4F46E5;">✅ คัดลอก Refresh Token ของคุณ</h2>
+        <p>นำค่าด้านล่างนี้ไปใส่ใน Vercel Environment Variables ชื่อ <b>GOOGLE_REFRESH_TOKEN</b></p>
+        <textarea style="width: 100%; height: 120px; padding: 15px; border: 2px solid #E5E7EB; border-radius: 12px; font-family: monospace; font-size: 14px; background: #F9FAFB;" readonly>${tokens.refresh_token}</textarea>
+        <div style="margin-top: 20px; padding: 15px; background: #FEF2F2; border-radius: 8px; border: 1px solid #FEE2E2;">
+          <p style="color: #EF4444; font-size: 14px; margin: 0;"><b>ขั้นตอนสุดท้าย:</b> เมื่อใส่ค่าใน Vercel แล้ว อย่าลืมกด <b>Redeploy</b> เพื่อให้ระบบเริ่มทำงานนะครับ</p>
         </div>
       </div>
     `);
@@ -255,12 +221,11 @@ router.get(["/auth/callback", "/api/auth/callback"], async (req, res) => {
   }
 });
 
-router.get(["/auth/status", "/api/auth/status"], (req, res) => {
-  const currentRefreshToken = getStoredRefreshToken() || GOOGLE_REFRESH_TOKEN;
-  res.json({ isAuthenticated: !!currentRefreshToken });
+router.get(["/api/auth/status", "/auth/status"], (req, res) => {
+  res.json({ isAuthenticated: !!GOOGLE_REFRESH_TOKEN });
 });
 
-router.get(["/repair/next-run-number", "/api/repair/next-run-number"], async (req, res) => {
+router.get("/api/repair/next-run-number", async (req, res) => {
   try {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     if (!spreadsheetId) throw new Error("GOOGLE_SHEET_ID is not configured.");
@@ -282,7 +247,7 @@ router.get(["/repair/next-run-number", "/api/repair/next-run-number"], async (re
   }
 });
 
-router.get(["/repair/list", "/api/repair/list"], async (req, res) => {
+router.get("/api/repair/list", async (req, res) => {
   console.log("Repair list requested");
   try {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -329,8 +294,8 @@ router.get(["/repair/list", "/api/repair/list"], async (req, res) => {
   }
 });
 
-// --- Main Save Logic ---
-router.post(["/repair/save", "/api/repair/save"], upload.single("file"), async (req, res) => {
+// --- Main Logic ---
+router.post("/api/repair/save", upload.single("file"), async (req, res) => {
   console.log("Save repair data requested");
   try {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -368,7 +333,7 @@ router.post(["/repair/save", "/api/repair/save"], upload.single("file"), async (
     let fileUrl = "";
     let uploadError = "";
 
-    if (file && file.buffer) {
+    if (file) {
       try {
         if (!rootFolderId) {
           throw new Error("GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured.");
@@ -406,14 +371,14 @@ router.post(["/repair/save", "/api/repair/save"], upload.single("file"), async (
         
         const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}แจ้งอุปกรณ์ชำรุด${cleanEquipmentId}.pdf`;
 
-        // 1. Upload in-memory buffer directly to Google Drive
+        // 1. Upload with temporary name first (or original name)
         const fileMetadata = {
           name: `uploading_${Date.now()}.pdf`,
           parents: [folderId],
         };
         const media = {
           mimeType: file.mimetype,
-          body: Readable.from(file.buffer),
+          body: fs.createReadStream(file.path),
         };
         const uploadedFile = await drive.files.create({
           requestBody: fileMetadata,
@@ -460,6 +425,10 @@ router.post(["/repair/save", "/api/repair/save"], upload.single("file"), async (
       } catch (err: any) {
         console.error("Drive/Sheets operation failed:", err);
         uploadError = ` (ดำเนินการไม่สำเร็จ: ${err.message})`;
+      } finally {
+        if (file && fs.existsSync(file.path)) {
+          fs.unlinkSync(file.path);
+        }
       }
     } else {
       // If no file, just append to sheets
@@ -502,16 +471,4 @@ router.post(["/repair/save", "/api/repair/save"], upload.single("file"), async (
   }
 });
 
-// Mount router on app for both root and /api prefixes
-app.use(router);
-app.use("/api", router);
-
-// Error handling middleware
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("Unhandled API Error:", err);
-  res.status(err.status || 500).json({
-    error: err.message || "เกิดข้อผิดพลาดในการประมวลผลของเซิร์ฟเวอร์",
-  });
-});
-
-export default app;
+export default router;

@@ -19,8 +19,7 @@ import {
   Search,
   ArrowLeft,
   Send,
-  MapPin,
-  RefreshCw
+  MapPin
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -101,27 +100,6 @@ const SUBSTATION_LOCATIONS: Record<string, string> = {
   'สถานีไฟฟ้าสมุทรสาคร 10': 'https://www.google.com/maps?q=13.625357,100.278072',
 };
 
-// --- Helper to parse API errors safely ---
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const text = await res.text();
-    try {
-      const json = JSON.parse(text);
-      return json.error || json.message || fallback;
-    } catch {
-      if (text.includes("FUNCTION_INVOCATION_TIMEOUT") || text.includes("504")) {
-        return "การเชื่อมต่อเซิร์ฟเวอร์ใช้เวลานานเกินกำหนด (Timeout) กรุณากดลองใหม่อีกครั้งครับ";
-      }
-      if (text.includes("A server error has occurred") || res.status === 500) {
-        return "เซิร์ฟเวอร์แจ้งข้อผิดพลาด (500) กรุณาตรวจสอบการตั้งค่า Environment Variables (เช่น GEMINI_API_KEY) บน Vercel หรือลองใหม่อีกครั้ง";
-      }
-      return text.length < 200 ? text : fallback;
-    }
-  } catch {
-    return fallback;
-  }
-}
-
 const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const [data, setData] = useState<RepairItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,8 +127,8 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
     try {
       const res = await fetch('/api/repair/list');
       if (!res.ok) {
-        const errorMsg = await parseApiError(res, 'ไม่สามารถโหลดข้อมูลจาก Google Sheets ได้');
-        throw new Error(errorMsg);
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to fetch data');
       }
       const json = await res.json();
       setData(json);
@@ -724,8 +702,8 @@ export default function App() {
         if (res.status === 429) {
           throw new Error('ขออภัยครับ โควตาการใช้งาน AI ชั่วคราวเต็มแล้ว (Rate Limit) รบกวนรอประมาณ 1-2 นาทีแล้วลองใหม่อีกครั้งครับ');
         }
-        const errorMsg = await parseApiError(res, 'AI ไม่สามารถประมวลผลได้ในขณะนี้');
-        throw new Error(errorMsg);
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'AI ไม่สามารถประมวลผลได้ในขณะนี้');
       }
 
       const extracted = await res.json();
@@ -757,19 +735,7 @@ export default function App() {
         method: 'POST',
         body: formData,
       });
-
-      if (!res.ok) {
-        const errorMsg = await parseApiError(res, 'เกิดข้อผิดพลาดในการบันทึกข้อมูล');
-        throw new Error(errorMsg);
-      }
-
-      let result: any;
-      try {
-        result = await res.json();
-      } catch {
-        throw new Error('ไม่สามารถอ่านข้อมูลผลการบันทึกจากเซิร์ฟเวอร์ได้');
-      }
-
+      const result = await res.json();
       if (result.success) {
         if (result.warning) {
           setMessage({ type: 'error', text: result.warning });
@@ -895,17 +861,6 @@ export default function App() {
                           <p className="font-medium truncate max-w-[200px]">{selectedFile.name}</p>
                           <p className="text-xs text-purple-400">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            extractData(selectedFile);
-                          }}
-                          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-100 hover:bg-purple-200 text-purple-900 rounded-lg text-xs font-semibold transition-all shadow-xs"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          ให้ AI อ่านเอกสารอีกครั้ง
-                        </button>
                       </>
                     ) : (
                       <>
@@ -1091,18 +1046,6 @@ export default function App() {
                         {message.type === 'success' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
                         <div className="flex-1">
                           {message.text}
-                          {selectedFile && message.type === 'error' && !isExtracting && (
-                            <div className="mt-3">
-                              <button
-                                type="button"
-                                onClick={() => extractData(selectedFile)}
-                                className="inline-flex items-center gap-2 px-3 py-1.5 bg-purple-900 text-white rounded-xl text-xs font-semibold hover:bg-purple-800 transition-all shadow-sm active:scale-95"
-                              >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                                ลองให้ AI อ่านเอกสารใหม่อีกครั้ง
-                              </button>
-                            </div>
-                          )}
                           {message.text.includes('invalid_grant') && (
                             <div className="mt-3">
                               <a 
