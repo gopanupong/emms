@@ -1,11 +1,21 @@
 import express from "express";
 import { google } from "googleapis";
 import multer from "multer";
-import fs from "fs";
-import os from "os";
+import { Readable } from "stream";
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { getStoredRefreshToken, setStoredRefreshToken } from "./token-store";
+
+const app = express();
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// In-memory Multer storage - safe for Vercel Serverless Function & AWS Lambda read-only environments
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB max
+});
 
 const router = express.Router();
 
@@ -58,11 +68,9 @@ async function getAuthenticatedClient() {
   throw new Error("Google credentials not configured. Please set GOOGLE_REFRESH_TOKEN or Service Account keys.");
 }
 
-// --- Multer Setup ---
-const upload = multer({ dest: os.tmpdir() });
-
 // --- Utilities ---
 function toArabicNumerals(str: string): string {
+  if (!str) return "";
   const thaiNumerals = ["๐", "๑", "๒", "๓", "๔", "๕", "๖", "๗", "๘", "๙"];
   const arabicNumerals = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
   let result = str;
@@ -72,17 +80,19 @@ function toArabicNumerals(str: string): string {
   return result;
 }
 
-// AI Extraction Route
-router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
+// --- AI Extraction Route ---
+router.post(["/ai/extract", "/api/ai/extract"], upload.single("file"), async (req, res) => {
   console.log("AI Extraction requested");
-  const file = (req as any).file;
   try {
     if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is not configured on the server.");
+      return res.status(500).json({ 
+        error: "เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Environment Variables ของ Vercel กรุณาเพิ่ม GEMINI_API_KEY ในการตั้งค่าโปรเจกต์บน Vercel" 
+      });
     }
 
-    if (!file) {
-      return res.status(400).json({ error: "No file uploaded" });
+    const file = (req as any).file;
+    if (!file || !file.buffer) {
+      return res.status(400).json({ error: "ไม่พบข้อมูลไฟล์ที่อัปโหลด หรือไฟล์ว่างเปล่า" });
     }
 
     let mimeType = file.mimetype;
@@ -95,37 +105,34 @@ router.post("/api/ai/extract", upload.single("file"), async (req, res) => {
     }
 
     const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
-    const fileBuffer = fs.readFileSync(file.path);
-    const base64Data = fileBuffer.toString("base64");
+    const base64Data = file.buffer.toString("base64");
 
-    // Candidate models in order of availability and speed
+    // Candidate models in order of speed and stability
     const CANDIDATE_MODELS = [
-      "gemini-3.1-flash-lite", // Fast, dedicated queue, lowest 503 chance
+      "gemini-3.1-flash-lite", // Fast, dedicated queue, lowest latency
       "gemini-3.6-flash",      // Next-gen high intelligence
       "gemini-flash-latest"    // Standard flash alias
     ];
 
     let extractedData: any = null;
     let lastError: any = null;
-    const maxRounds = 2;
 
-    for (let round = 1; round <= maxRounds; round++) {
-      for (const modelName of CANDIDATE_MODELS) {
-        try {
-          console.log(`Extracting with model: ${modelName} (round ${round})...`);
-          const response = await ai.models.generateContent({
-            model: modelName,
-            contents: [
-              {
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: mimeType,
-                      data: base64Data,
-                    },
+    for (const modelName of CANDIDATE_MODELS) {
+      try {
+        console.log(`Extracting with model: ${modelName}...`);
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: [
+            {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimeType,
+                    data: base64Data,
                   },
-                  {
-                    text: `Extract repair information from this document in Thai. 
+                },
+                {
+                  text: `Extract repair information from this document in Thai. 
 IMPORTANT: Convert all Thai numerals (๐-๙) to Arabic numerals (0-9) in all extracted fields.
 Return a JSON object with these fields:
 - substation: ดึงข้อมูลจากหัวข้อ "เรื่อง" โดยเอาข้อความที่อยู่หลังคำว่า "สถานีไฟฟ้า" (เช่น ถ้าเรื่องคือ "แจ้งอุปกรณ์ชำรุด สถานีไฟฟ้าสมุทรสาคร 10" ให้เอาแค่ "สมุทรสาคร 10")
@@ -137,51 +144,44 @@ Return a JSON object with these fields:
 - signedDate: วันที่ผู้บริหารเซ็น โดยให้หาจากบริเวณใกล้ๆ กับคำว่า "อก.ปบ.(ก3)" (ระบุเป็น วว/ดด/ปปปป ในรูปแบบเลขอารบิก)
 
 If a field is not found, leave it as an empty string.`,
-                  },
-                ],
-              },
-            ],
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
-                  substation: { type: Type.STRING },
-                  docNumber: { type: Type.STRING },
-                  equipmentId: { type: Type.STRING },
-                  details: { type: Type.STRING },
-                  detailsAI: { type: Type.STRING },
-                  responsible: { type: Type.STRING },
-                  signedDate: { type: Type.STRING },
                 },
-                required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
-              },
+              ],
             },
-          });
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                substation: { type: Type.STRING },
+                docNumber: { type: Type.STRING },
+                equipmentId: { type: Type.STRING },
+                details: { type: Type.STRING },
+                detailsAI: { type: Type.STRING },
+                responsible: { type: Type.STRING },
+                signedDate: { type: Type.STRING },
+              },
+              required: ["substation", "docNumber", "equipmentId", "details", "detailsAI", "responsible", "signedDate"],
+            },
+          },
+        });
 
-          let rawText = response.text || "{}";
-          rawText = rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
-          const parsed = JSON.parse(rawText);
+        let rawText = response.text || "{}";
+        rawText = rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+        const parsed = JSON.parse(rawText);
 
-          Object.keys(parsed).forEach((key) => {
-            if (typeof parsed[key] === "string") {
-              parsed[key] = toArabicNumerals(parsed[key]);
-            }
-          });
+        Object.keys(parsed).forEach((key) => {
+          if (typeof parsed[key] === "string") {
+            parsed[key] = toArabicNumerals(parsed[key]);
+          }
+        });
 
-          extractedData = parsed;
-          console.log(`AI Extraction succeeded using ${modelName}`);
-          break;
-        } catch (err: any) {
-          lastError = err;
-          console.warn(`Model ${modelName} failed (${err.status || err.message}). Failing over to next model...`);
-        }
-      }
-
-      if (extractedData) break;
-      if (round < maxRounds) {
-        console.log("Waiting 2s before round 2...");
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        extractedData = parsed;
+        console.log(`AI Extraction succeeded with ${modelName}`);
+        break;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Model ${modelName} failed (${err.status || err.message}). Failing over to next model...`);
       }
     }
 
@@ -195,29 +195,21 @@ If a field is not found, leave it as an empty string.`,
       });
     }
 
-    if (lastError?.message?.includes("invalid_grant")) {
-      return res.status(401).json({
-        error: "สิทธิ์การเข้าถึง Google หมดอายุ (invalid_grant) กรุณาทำการยืนยันตัวตนใหม่ที่ " + APP_URL + "/api/auth/init"
+    if (lastError?.status === 429 || lastError?.message?.includes("429")) {
+      return res.status(429).json({ 
+        error: "โควตาการเรียกใช้งาน AI ชั่วคราวเต็มแล้ว (Rate Limit) รบกวนรอประมาณ 1 นาทีแล้วลองใหม่อีกครั้งครับ" 
       });
     }
-    
-    throw lastError;
+
+    throw lastError || new Error("AI ไม่สามารถประมวลผลเอกสารได้");
   } catch (error: any) {
     console.error("AI Extraction failed:", error);
     res.status(500).json({ error: error.message || "เกิดข้อผิดพลาดในการประมวลผลเอกสาร" });
-  } finally {
-    if (file && fs.existsSync(file.path)) {
-      try {
-        fs.unlinkSync(file.path);
-      } catch (cleanupErr) {
-        console.error("Failed to clean up temp file:", cleanupErr);
-      }
-    }
   }
 });
 
-// Auth Routes
-router.get(["/api/auth/init", "/auth/init"], (req, res) => {
+// --- Auth Routes ---
+router.get(["/auth/init", "/api/auth/init"], (req, res) => {
   console.log("Auth init requested");
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !APP_URL) {
     return res.status(400).send("Missing GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, or APP_URL in environment variables.");
@@ -231,7 +223,7 @@ router.get(["/api/auth/init", "/auth/init"], (req, res) => {
   res.redirect(url);
 });
 
-router.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
+router.get(["/auth/callback", "/api/auth/callback"], async (req, res) => {
   const { code } = req.query;
   try {
     const oauth2Client = getOAuth2Client();
@@ -262,12 +254,12 @@ router.get(["/api/auth/callback", "/auth/callback"], async (req, res) => {
   }
 });
 
-router.get(["/api/auth/status", "/auth/status"], (req, res) => {
+router.get(["/auth/status", "/api/auth/status"], (req, res) => {
   const currentRefreshToken = getStoredRefreshToken() || GOOGLE_REFRESH_TOKEN;
   res.json({ isAuthenticated: !!currentRefreshToken });
 });
 
-router.get("/api/repair/next-run-number", async (req, res) => {
+router.get(["/repair/next-run-number", "/api/repair/next-run-number"], async (req, res) => {
   try {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
     if (!spreadsheetId) throw new Error("GOOGLE_SHEET_ID is not configured.");
@@ -289,7 +281,7 @@ router.get("/api/repair/next-run-number", async (req, res) => {
   }
 });
 
-router.get("/api/repair/list", async (req, res) => {
+router.get(["/repair/list", "/api/repair/list"], async (req, res) => {
   console.log("Repair list requested");
   try {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -336,8 +328,8 @@ router.get("/api/repair/list", async (req, res) => {
   }
 });
 
-// --- Main Logic ---
-router.post("/api/repair/save", upload.single("file"), async (req, res) => {
+// --- Main Save Logic ---
+router.post(["/repair/save", "/api/repair/save"], upload.single("file"), async (req, res) => {
   console.log("Save repair data requested");
   try {
     const spreadsheetId = process.env.GOOGLE_SHEET_ID;
@@ -375,7 +367,7 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
     let fileUrl = "";
     let uploadError = "";
 
-    if (file) {
+    if (file && file.buffer) {
       try {
         if (!rootFolderId) {
           throw new Error("GOOGLE_DRIVE_ROOT_FOLDER_ID is not configured.");
@@ -413,14 +405,14 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
         
         const finalFileName = `${runNumber}_${cleanSubstation}_${cleanDocNumber}แจ้งอุปกรณ์ชำรุด${cleanEquipmentId}.pdf`;
 
-        // 1. Upload with temporary name first (or original name)
+        // 1. Upload in-memory buffer directly to Google Drive
         const fileMetadata = {
           name: `uploading_${Date.now()}.pdf`,
           parents: [folderId],
         };
         const media = {
           mimeType: file.mimetype,
-          body: fs.createReadStream(file.path),
+          body: Readable.from(file.buffer),
         };
         const uploadedFile = await drive.files.create({
           requestBody: fileMetadata,
@@ -467,10 +459,6 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
       } catch (err: any) {
         console.error("Drive/Sheets operation failed:", err);
         uploadError = ` (ดำเนินการไม่สำเร็จ: ${err.message})`;
-      } finally {
-        if (file && fs.existsSync(file.path)) {
-          fs.unlinkSync(file.path);
-        }
       }
     } else {
       // If no file, just append to sheets
@@ -513,4 +501,16 @@ router.post("/api/repair/save", upload.single("file"), async (req, res) => {
   }
 });
 
-export default router;
+// Mount router on app for both root and /api prefixes
+app.use(router);
+app.use("/api", router);
+
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Unhandled API Error:", err);
+  res.status(err.status || 500).json({
+    error: err.message || "เกิดข้อผิดพลาดในการประมวลผลของเซิร์ฟเวอร์",
+  });
+});
+
+export default app;

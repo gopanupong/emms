@@ -101,6 +101,27 @@ const SUBSTATION_LOCATIONS: Record<string, string> = {
   'สถานีไฟฟ้าสมุทรสาคร 10': 'https://www.google.com/maps?q=13.625357,100.278072',
 };
 
+// --- Helper to parse API errors safely ---
+async function parseApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      return json.error || json.message || fallback;
+    } catch {
+      if (text.includes("FUNCTION_INVOCATION_TIMEOUT") || text.includes("504")) {
+        return "การเชื่อมต่อเซิร์ฟเวอร์ใช้เวลานานเกินกำหนด (Timeout) กรุณากดลองใหม่อีกครั้งครับ";
+      }
+      if (text.includes("A server error has occurred") || res.status === 500) {
+        return "เซิร์ฟเวอร์แจ้งข้อผิดพลาด (500) กรุณาตรวจสอบการตั้งค่า Environment Variables (เช่น GEMINI_API_KEY) บน Vercel หรือลองใหม่อีกครั้ง";
+      }
+      return text.length < 200 ? text : fallback;
+    }
+  } catch {
+    return fallback;
+  }
+}
+
 const Dashboard = ({ onBack }: { onBack: () => void }) => {
   const [data, setData] = useState<RepairItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,8 +149,8 @@ const Dashboard = ({ onBack }: { onBack: () => void }) => {
     try {
       const res = await fetch('/api/repair/list');
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to fetch data');
+        const errorMsg = await parseApiError(res, 'ไม่สามารถโหลดข้อมูลจาก Google Sheets ได้');
+        throw new Error(errorMsg);
       }
       const json = await res.json();
       setData(json);
@@ -703,8 +724,8 @@ export default function App() {
         if (res.status === 429) {
           throw new Error('ขออภัยครับ โควตาการใช้งาน AI ชั่วคราวเต็มแล้ว (Rate Limit) รบกวนรอประมาณ 1-2 นาทีแล้วลองใหม่อีกครั้งครับ');
         }
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'AI ไม่สามารถประมวลผลได้ในขณะนี้');
+        const errorMsg = await parseApiError(res, 'AI ไม่สามารถประมวลผลได้ในขณะนี้');
+        throw new Error(errorMsg);
       }
 
       const extracted = await res.json();
@@ -736,7 +757,19 @@ export default function App() {
         method: 'POST',
         body: formData,
       });
-      const result = await res.json();
+
+      if (!res.ok) {
+        const errorMsg = await parseApiError(res, 'เกิดข้อผิดพลาดในการบันทึกข้อมูล');
+        throw new Error(errorMsg);
+      }
+
+      let result: any;
+      try {
+        result = await res.json();
+      } catch {
+        throw new Error('ไม่สามารถอ่านข้อมูลผลการบันทึกจากเซิร์ฟเวอร์ได้');
+      }
+
       if (result.success) {
         if (result.warning) {
           setMessage({ type: 'error', text: result.warning });
