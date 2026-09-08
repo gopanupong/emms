@@ -84,9 +84,10 @@ function toArabicNumerals(str: string): string {
 router.post(["/ai/extract", "/api/ai/extract"], upload.single("file"), async (req, res) => {
   console.log("AI Extraction requested");
   try {
-    if (!GEMINI_API_KEY) {
+    const activeApiKey = (process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || GEMINI_API_KEY || "").trim().replace(/^["']|["']$/g, '');
+    if (!activeApiKey) {
       return res.status(500).json({ 
-        error: "เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Environment Variables ของ Vercel กรุณาเพิ่ม GEMINI_API_KEY ในการตั้งค่าโปรเจกต์บน Vercel" 
+        error: "เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า GEMINI_API_KEY ใน Environment Variables ของ Vercel กรุณาเพิ่ม GEMINI_API_KEY ในการตั้งค่าโปรเจกต์บน Vercel แล้วกด Redeploy" 
       });
     }
 
@@ -104,7 +105,7 @@ router.post(["/ai/extract", "/api/ai/extract"], upload.single("file"), async (re
       else if (ext === "webp") mimeType = "image/webp";
     }
 
-    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+    const ai = new GoogleGenAI({ apiKey: activeApiKey });
     const base64Data = file.buffer.toString("base64");
 
     // Candidate models in order of speed and stability
